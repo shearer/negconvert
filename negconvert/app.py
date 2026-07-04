@@ -8,39 +8,10 @@ from PIL import Image, ImageTk
 
 from . import processor
 from . import theme
+from . import widgets
+from .widgets import ModernSlider, PillButton
 
 PREVIEW_MAX_DIM = 900
-
-
-class Slider(ttk.Frame):
-    """A labeled slider with a live value readout, on the panel background."""
-
-    def __init__(self, parent, label, frm, to, initial, step, on_change):
-        super().__init__(parent, style="Panel.TFrame")
-        self._on_change = on_change
-
-        header = ttk.Frame(self, style="Panel.TFrame")
-        header.pack(fill="x")
-        ttk.Label(header, text=label, style="Panel.TLabel").pack(side="left")
-        self.value_lbl = ttk.Label(header, text=f"{initial:.2f}", style="Value.TLabel")
-        self.value_lbl.pack(side="right")
-
-        self.var = tk.DoubleVar(value=initial)
-        self.scale = ttk.Scale(self, from_=frm, to=to, orient="horizontal",
-                                variable=self.var, command=self._changed)
-        self.scale.pack(fill="x", pady=(2, 10))
-        self._step = step
-
-    def _changed(self, _evt):
-        self.value_lbl.configure(text=f"{self.var.get():.2f}")
-        self._on_change()
-
-    def get(self):
-        return self.var.get()
-
-    def set(self, value):
-        self.var.set(value)
-        self.value_lbl.configure(text=f"{value:.2f}")
 
 
 class NegConvertApp:
@@ -64,14 +35,17 @@ class NegConvertApp:
     # ---------- layout ----------
 
     def _build_layout(self):
-        toolbar = ttk.Frame(self.root, style="Panel.TFrame", padding=8)
+        toolbar = ttk.Frame(self.root, style="Panel.TFrame", padding=12)
         toolbar.pack(side="top", fill="x")
 
-        ttk.Button(toolbar, text="Open Negative…", command=self.open_image).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="Auto Base Color", command=self.auto_base).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="Reset Adjustments", command=self.reset_adjustments).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="Save As…", style="Accent.TButton",
-                   command=self.save_image).pack(side="right", padx=4)
+        PillButton(toolbar, "Open Negative…", command=self.open_image,
+                   bg=theme.PANEL).pack(side="left", padx=4)
+        PillButton(toolbar, "Auto Base Color", command=self.auto_base,
+                   bg=theme.PANEL).pack(side="left", padx=4)
+        PillButton(toolbar, "Reset Adjustments", command=self.reset_adjustments,
+                   bg=theme.PANEL).pack(side="left", padx=4)
+        PillButton(toolbar, "Save As…", command=self.save_image, accent=True,
+                   bg=theme.PANEL, font=("Helvetica", 11, "bold")).pack(side="right", padx=4)
 
         body = ttk.Frame(self.root)
         body.pack(side="top", fill="both", expand=True)
@@ -88,35 +62,35 @@ class NegConvertApp:
         self.canvas.bind("<Configure>", self._center_placeholder)
 
         # sidebar
-        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=14, width=280)
+        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=18, width=300)
         sidebar.pack(side="right", fill="y")
         sidebar.pack_propagate(False)
 
-        ttk.Label(sidebar, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 10))
+        ttk.Label(sidebar, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
 
-        self.exposure_s = Slider(sidebar, "Exposure (EV)", -2.0, 2.0, self.params.exposure, 0.01, self.on_slider)
+        self.exposure_s = ModernSlider(sidebar, "Exposure (EV)", -2.0, 2.0, self.params.exposure, self.on_slider)
         self.exposure_s.pack(fill="x")
-        self.contrast_s = Slider(sidebar, "Contrast", 0.5, 2.5, self.params.contrast, 0.01, self.on_slider)
+        self.contrast_s = ModernSlider(sidebar, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider)
         self.contrast_s.pack(fill="x")
-        self.gamma_s = Slider(sidebar, "Gamma", 0.5, 2.5, self.params.gamma, 0.01, self.on_slider)
+        self.gamma_s = ModernSlider(sidebar, "Gamma", 0.5, 2.5, self.params.gamma, self.on_slider)
         self.gamma_s.pack(fill="x")
 
         ttk.Separator(sidebar).pack(fill="x", pady=8)
-        ttk.Label(sidebar, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 10))
+        ttk.Label(sidebar, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
 
-        self.gain_r_s = Slider(sidebar, "Red", 0.7, 1.4, self.params.gain_r, 0.01, self.on_slider)
+        self.gain_r_s = ModernSlider(sidebar, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider)
         self.gain_r_s.pack(fill="x")
-        self.gain_g_s = Slider(sidebar, "Green", 0.7, 1.4, self.params.gain_g, 0.01, self.on_slider)
+        self.gain_g_s = ModernSlider(sidebar, "Green", 0.7, 1.4, self.params.gain_g, self.on_slider)
         self.gain_g_s.pack(fill="x")
-        self.gain_b_s = Slider(sidebar, "Blue", 0.7, 1.4, self.params.gain_b, 0.01, self.on_slider)
+        self.gain_b_s = ModernSlider(sidebar, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider)
         self.gain_b_s.pack(fill="x")
 
         ttk.Separator(sidebar).pack(fill="x", pady=8)
-        ttk.Label(sidebar, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
+        ttk.Label(sidebar, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
         swatch_row = ttk.Frame(sidebar, style="Panel.TFrame")
         swatch_row.pack(fill="x")
-        self.base_swatch = tk.Canvas(swatch_row, width=28, height=28, highlightthickness=1,
-                                      highlightbackground=theme.PANEL_DARK)
+        self.base_swatch = tk.Canvas(swatch_row, width=32, height=32, bg=theme.PANEL,
+                                      highlightthickness=0)
         self.base_swatch.pack(side="left")
         self.base_lbl = ttk.Label(swatch_row, text="not sampled", style="Panel.TLabel")
         self.base_lbl.pack(side="left", padx=8)
@@ -230,7 +204,9 @@ class NegConvertApp:
 
     def _update_base_swatch(self):
         r, g, b = (int(np.clip(c, 0, 1) * 255) for c in self.params.base_color)
-        self.base_swatch.configure(bg=f"#{r:02x}{g:02x}{b:02x}")
+        self.base_swatch.delete("all")
+        widgets.round_rectangle(self.base_swatch, 1, 1, 31, 31, 8,
+                                 fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
         self.base_lbl.configure(text=f"R{r} G{g} B{b}")
 
     def render_preview(self):
