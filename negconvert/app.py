@@ -6,12 +6,15 @@ from tkinter import ttk, filedialog, messagebox
 import numpy as np
 from PIL import Image, ImageTk
 
+from . import crop
 from . import processor
 from . import theme
 from . import widgets
 from .widgets import ModernSlider, PillButton
 
 PREVIEW_MAX_DIM = 900
+HANDLE_HIT_RADIUS = 12
+CROP_HANDLE_R = 8
 
 
 class NegConvertApp:
@@ -29,6 +32,13 @@ class NegConvertApp:
         self.tk_image = None
         self.image_path = None
 
+        self.crop_mode = False
+        self.crop_rect = crop.FULL_RECT     # (fx0, fy0, fx1, fy1), fractional of full image
+        self.aspect_ratio = None            # None = Free
+        self._crop_drag = None
+        self._crop_handles = {}
+        self._crop_rect_canvas = None
+
         self._build_layout()
         self._bind_shortcuts()
 
@@ -40,6 +50,9 @@ class NegConvertApp:
 
         PillButton(toolbar, "Open Negative…", command=self.open_image,
                    bg=theme.PANEL).pack(side="left", padx=4)
+        self.crop_btn = PillButton(toolbar, "Crop", command=self.toggle_crop,
+                                    bg=theme.PANEL)
+        self.crop_btn.pack(side="left", padx=4)
         PillButton(toolbar, "Auto Base Color", command=self.auto_base,
                    bg=theme.PANEL).pack(side="left", padx=4)
         PillButton(toolbar, "Reset Adjustments", command=self.reset_adjustments,
@@ -55,7 +68,9 @@ class NegConvertApp:
         canvas_frame.pack(side="left", fill="both", expand=True)
         self.canvas = tk.Canvas(canvas_frame, bg=theme.CANVAS_BG, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
-        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<Button-1>", self.on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
         self.canvas_placeholder = self.canvas.create_text(
             0, 0, text="Open a negative scan to begin\n(click the image later to sample the film base color)",
             fill=theme.TEXT_DIM, font=("Helvetica", 13), justify="center")
@@ -84,6 +99,18 @@ class NegConvertApp:
         self.gain_g_s.pack(fill="x")
         self.gain_b_s = ModernSlider(sidebar, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider)
         self.gain_b_s.pack(fill="x")
+
+        ttk.Separator(sidebar).pack(fill="x", pady=8)
+        ttk.Label(sidebar, text="Crop", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
+        self.aspect_var = tk.StringVar(value=crop.ASPECT_PRESETS[0][0])
+        aspect_box = ttk.Combobox(sidebar, textvariable=self.aspect_var, state="readonly",
+                                   values=[label for label, _ in crop.ASPECT_PRESETS])
+        aspect_box.pack(fill="x", pady=(0, 8))
+        aspect_box.bind("<<ComboboxSelected>>", self.on_aspect_change)
+        PillButton(sidebar, "Reset Crop", command=self.reset_crop,
+                   bg=theme.PANEL).pack(anchor="w")
+        ttk.Label(sidebar, text="Click 'Crop' above, then drag the\ncorner handles or the box itself.",
+                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(8, 0))
 
         ttk.Separator(sidebar).pack(fill="x", pady=8)
         ttk.Label(sidebar, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
@@ -143,6 +170,12 @@ class NegConvertApp:
         ph, pw = self.preview_arr.shape[:2]
         self.preview_scale = ph / h
 
+        self.crop_mode = False
+        self.crop_btn.set_active(False)
+        self.crop_rect = crop.FULL_RECT
+        self.aspect_ratio = None
+        self.aspect_var.set(crop.ASPECT_PRESETS[0][0])
+
         self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
         self.status_lbl.configure(
@@ -165,7 +198,9 @@ class NegConvertApp:
         )
         if not path:
             return
-        full_positive = processor.convert(self.full_arr, self.params, self.is_linear)
+        x0, y0, x1, y1 = crop.crop_pixel_box(self.full_arr.shape, self.crop_rect)
+        cropped = self.full_arr[y0:y1, x0:x1]
+        full_positive = processor.convert(cropped, self.params, self.is_linear)
         out = Image.fromarray(processor.to_uint8(full_positive))
         try:
             out.save(path)
@@ -212,7 +247,16 @@ class NegConvertApp:
     def render_preview(self):
         if self.preview_arr is None:
             return
-        positive = processor.convert(self.preview_arr, self.params, self.is_linear)
+        ph, pw = self.preview_arr.shape[:2]
+        if self.crop_mode:
+            source = self.preview_arr
+            origin_px = (0, 0)
+        else:
+            x0, y0, x1, y1 = crop.crop_pixel_box((ph, pw), self.crop_rect)
+            source = self.preview_arr[y0:y1, x0:x1]
+            origin_px = (x0, y0)
+
+        positive = processor.convert(source, self.params, self.is_linear)
         img = Image.fromarray(processor.to_uint8(positive))
 
         self.canvas.update_idletasks()
@@ -229,16 +273,141 @@ class NegConvertApp:
         ox = (cw - disp_w) // 2
         oy = (ch - disp_h) // 2
         self._img_offset = (ox, oy)
-        self._img_display_scale = disp_w / iw  # relative to preview_arr pixels
-        self.canvas.create_image(ox, oy, anchor="nw", image=self.tk_image)
+        self._img_display_scale = disp_w / iw  # relative to `source` pixels
+        self._display_origin_px = origin_px    # source's origin within preview_arr
+        self.canvas.create_image(ox, oy, anchor="nw", image=self.tk_image, tags=("bg_image",))
 
-    def on_canvas_click(self, event):
+        if self.crop_mode:
+            self._draw_crop_overlay()
+
+    # ---------- crop tool ----------
+
+    def toggle_crop(self):
         if self.full_arr is None:
             return
-        ox, oy = getattr(self, "_img_offset", (0, 0))
-        scale = getattr(self, "_img_display_scale", 1.0)
-        img_x = int((event.x - ox) / scale)
-        img_y = int((event.y - oy) / scale)
+        self.crop_mode = not self.crop_mode
+        self.crop_btn.set_active(self.crop_mode)
+        self.render_preview()
+
+    def reset_crop(self):
+        self.crop_rect = crop.FULL_RECT
+        self.render_preview()
+
+    def on_aspect_change(self, _evt=None):
+        ratio = dict(crop.ASPECT_PRESETS)[self.aspect_var.get()]
+        self.aspect_ratio = ratio
+        if self.full_arr is not None and ratio is not None:
+            H, W = self.full_arr.shape[:2]
+            self.crop_rect = crop.fit_rect_to_ratio(self.crop_rect, ratio, W, H)
+        self.render_preview()
+
+    def _draw_crop_overlay(self):
+        self.canvas.delete("crop_overlay")
+        ph, pw = self.preview_arr.shape[:2]
+        ox, oy = self._img_offset
+        scale = self._img_display_scale
+        fx0, fy0, fx1, fy1 = self.crop_rect
+
+        ix0, iy0 = ox, oy
+        ix1, iy1 = ox + pw * scale, oy + ph * scale
+        cx0, cy0 = ox + fx0 * pw * scale, oy + fy0 * ph * scale
+        cx1, cy1 = ox + fx1 * pw * scale, oy + fy1 * ph * scale
+
+        dim = dict(fill=theme.CANVAS_BG, stipple="gray50", outline="", tags=("crop_overlay",))
+        self.canvas.create_rectangle(ix0, iy0, ix1, cy0, **dim)  # top
+        self.canvas.create_rectangle(ix0, cy1, ix1, iy1, **dim)  # bottom
+        self.canvas.create_rectangle(ix0, cy0, cx0, cy1, **dim)  # left
+        self.canvas.create_rectangle(cx1, cy0, ix1, cy1, **dim)  # right
+
+        self.canvas.create_rectangle(cx0, cy0, cx1, cy1, outline=theme.ACCENT, width=2,
+                                      tags=("crop_overlay",))
+
+        self._crop_handles = {"tl": (cx0, cy0), "tr": (cx1, cy0), "bl": (cx0, cy1), "br": (cx1, cy1)}
+        for hx, hy in self._crop_handles.values():
+            self.canvas.create_oval(hx - CROP_HANDLE_R, hy - CROP_HANDLE_R,
+                                     hx + CROP_HANDLE_R, hy + CROP_HANDLE_R,
+                                     fill=theme.HANDLE, outline=theme.ACCENT_DARK, width=2,
+                                     tags=("crop_overlay",))
+        self._crop_rect_canvas = (cx0, cy0, cx1, cy1)
+
+    def _hit_test_handle(self, x, y):
+        for name, (hx, hy) in self._crop_handles.items():
+            if (x - hx) ** 2 + (y - hy) ** 2 <= HANDLE_HIT_RADIUS ** 2:
+                return name
+        return None
+
+    def _point_in_crop_rect(self, x, y):
+        if not self._crop_rect_canvas:
+            return False
+        cx0, cy0, cx1, cy1 = self._crop_rect_canvas
+        return cx0 <= x <= cx1 and cy0 <= y <= cy1
+
+    # ---------- canvas interaction ----------
+
+    def on_canvas_press(self, event):
+        if self.full_arr is None:
+            return
+        if self.crop_mode:
+            handle = self._hit_test_handle(event.x, event.y)
+            if handle:
+                self._crop_drag = {"mode": "resize", "corner": handle}
+            elif self._point_in_crop_rect(event.x, event.y):
+                self._crop_drag = {"mode": "move", "start": (event.x, event.y),
+                                    "orig_rect": self.crop_rect}
+            else:
+                self._crop_drag = None
+        else:
+            self._sample_base_from_click(event)
+
+    def on_canvas_drag(self, event):
+        if not self.crop_mode or self._crop_drag is None or self.preview_arr is None:
+            return
+        ph, pw = self.preview_arr.shape[:2]
+        ox, oy = self._img_offset
+        scale = self._img_display_scale
+        H, W = self.full_arr.shape[:2]
+
+        fx = min(max((event.x - ox) / scale / pw, 0.0), 1.0)
+        fy = min(max((event.y - oy) / scale / ph, 0.0), 1.0)
+
+        if self._crop_drag["mode"] == "move":
+            start_x, start_y = self._crop_drag["start"]
+            dfx = (event.x - start_x) / scale / pw
+            dfy = (event.y - start_y) / scale / ph
+            fx0, fy0, fx1, fy1 = self._crop_drag["orig_rect"]
+            w, h = fx1 - fx0, fy1 - fy0
+            nx0, nx1 = crop.clamp_range(fx0 + dfx, fx0 + dfx + w)
+            ny0, ny1 = crop.clamp_range(fy0 + dfy, fy0 + dfy + h)
+            self.crop_rect = (nx0, ny0, nx1, ny1)
+        else:
+            corner = self._crop_drag["corner"]
+            fx0, fy0, fx1, fy1 = self.crop_rect
+            anchor_x = fx1 if corner in ("tl", "bl") else fx0
+            anchor_y = fy1 if corner in ("tl", "tr") else fy0
+            new_x, new_y = crop.resize_corner((anchor_x, anchor_y), (fx, fy),
+                                               self.aspect_ratio, W, H)
+            if corner in ("tl", "bl"):
+                fx0 = new_x
+            else:
+                fx1 = new_x
+            if corner in ("tl", "tr"):
+                fy0 = new_y
+            else:
+                fy1 = new_y
+            if fx1 - fx0 >= crop.MIN_SIZE and fy1 - fy0 >= crop.MIN_SIZE:
+                self.crop_rect = (min(fx0, fx1), min(fy0, fy1), max(fx0, fx1), max(fy0, fy1))
+
+        self._draw_crop_overlay()
+
+    def on_canvas_release(self, _event):
+        self._crop_drag = None
+
+    def _sample_base_from_click(self, event):
+        ox, oy = self._img_offset
+        scale = self._img_display_scale
+        ox_px, oy_px = self._display_origin_px
+        img_x = int(ox_px + (event.x - ox) / scale)
+        img_y = int(oy_px + (event.y - oy) / scale)
         ph, pw = self.preview_arr.shape[:2]
         if not (0 <= img_x < pw and 0 <= img_y < ph):
             return

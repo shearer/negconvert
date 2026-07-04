@@ -34,4 +34,15 @@ def apply(root):
 
     style.configure("TSeparator", background=PANEL_DARK)
 
+    style.configure("TCombobox", fieldbackground=PANEL_DARK, background=PANEL_DARK,
+                    foreground=TEXT, arrowcolor=TEXT, borderwidth=0, padding=6)
+    style.map("TCombobox",
+              fieldbackground=[("readonly", PANEL_DARK)],
+              foreground=[("readonly", TEXT)],
+              background=[("active", ACCENT)])
+    root.option_add("*TCombobox*Listbox.background", PANEL_DARK)
+    root.option_add("*TCombobox*Listbox.foreground", TEXT)
+    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+    root.option_add("*TCombobox*Listbox.selectForeground", "#2b2b2b")
+
     return style

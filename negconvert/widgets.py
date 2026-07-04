@@ -69,6 +69,12 @@ class PillButton(tk.Canvas):
         self._state = state
         self._draw()
 
+    def set_active(self, active):
+        """Toggle the accent (pressed-looking) appearance, e.g. for a mode toggle."""
+        self._accent = active
+        self._state = "normal"
+        self._draw()
+
     def _draw(self):
         self.delete("all")
         fill, fg = self._colors()
