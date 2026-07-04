@@ -90,14 +90,25 @@ def _load_dng(path: str) -> np.ndarray:
     return rgb16.astype(np.float32) / 65535.0
 
 
-def downscale(arr: np.ndarray, max_dim: int = 900) -> np.ndarray:
+def downscale(arr: np.ndarray, max_dim: int = 900, is_linear: bool = False) -> np.ndarray:
+    """Downscale for the interactive preview.
+
+    Resizing has to quantize to 8 bits along the way (PIL/uint8 round-trip).
+    Doing that directly on *linear* data is destructive: linear-light values
+    pack almost all of their detail into a narrow low range, so 256 levels
+    there produces visible banding once our log/density math stretches it
+    back out. Gamma-encode first (like a normal photo), quantize, then decode
+    back to linear - the same precision budget a JPEG scan already gets.
+    """
     h, w = arr.shape[:2]
     scale = min(1.0, max_dim / max(h, w))
     if scale >= 1.0:
         return arr
-    img = Image.fromarray((arr * 255).astype(np.uint8))
+    encoded = linear_to_srgb(arr) if is_linear else arr
+    img = Image.fromarray((np.clip(encoded, 0.0, 1.0) * 255).astype(np.uint8))
     img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.BILINEAR)
-    return np.asarray(img, dtype=np.float32) / 255.0
+    resized = np.asarray(img, dtype=np.float32) / 255.0
+    return srgb_to_linear(resized) if is_linear else resized
 
 
 def estimate_base_color(arr: np.ndarray) -> tuple:
@@ -120,6 +131,66 @@ def estimate_base_color(arr: np.ndarray) -> tuple:
     if band.size == 0:
         band = flat[luma >= lo] if np.any(luma >= lo) else flat
     return tuple(float(v) for v in np.median(band, axis=0))
+
+
+def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
+                 shadow_pct: float = 0.5, highlight_pct: float = 99.5,
+                 clip_floor: float = 0.01, mid_target: float = 0.214) -> tuple:
+    """Suggest (exposure, contrast, gamma) that map this image's *own*
+    density histogram onto the output range: black point and white point
+    from the shadow/highlight percentiles, and a gamma curve that repositions
+    the *median* onto a sensible midtone.
+
+    The black/white stretch alone isn't enough: a real scene's histogram is
+    rarely centered between its shadow and highlight percentiles - e.g. a
+    bright beach/sky scene has most of its pixels bunched up near the bright
+    end, with only sparse dark accents and sparse extreme highlights at the
+    two ends. Stretching such a skewed histogram linearly still leaves the
+    *bulk* of the image (everywhere near the median) sitting wherever that
+    linear fit happens to place it - here, ~69% of the way to white - which
+    reads as a flat, washed-out, pale image even though black and white are
+    technically both present at the sparse extremes. A gamma curve (like any
+    photo tool's "curves"/midtone slider) repositions the median without
+    touching the anchored black and white points. `mid_target` is in linear
+    light (pre-sRGB-encode), so 0.214 - not a visually "half-bright" 0.5 -
+    is the target: linear_to_srgb(0.214) ~= 0.5, the classic "18% gray card"
+    reference for a properly balanced midtone.
+
+    `base_color` is only ever an estimate, and if it's off - notably if the
+    frame has no true clear-film area to sample from - that shows up as a
+    near-constant density offset; the black/white stretch self-corrects for
+    that regardless of how good the base estimate was.
+
+    Fully clipped pixels (any channel at or near raw zero - e.g. a blown sky)
+    are excluded from all three statistics first: density is -log2(ratio),
+    which shoots toward infinity as the raw value hits zero, so even a small
+    clipped population can hijack a percentile and distort the whole result.
+    """
+    base = np.array(base_color, dtype=np.float32)
+    lin = arr if is_linear else srgb_to_linear(arr)
+    base_lin = base if is_linear else srgb_to_linear(base)
+    ratio = np.clip(lin / (base_lin + EPS), EPS, None)
+    density_luma = (-np.log2(ratio)).mean(axis=-1)
+
+    unclipped = ratio.min(axis=-1) > clip_floor
+    sample = density_luma[unclipped] if np.count_nonzero(unclipped) >= density_luma.size // 20 else density_luma
+
+    lo, median, hi = (float(v) for v in np.percentile(sample, [shadow_pct, 50.0, highlight_pct]))
+    span = max(hi - lo, EPS)
+
+    contrast = DENSITY_RANGE / span
+    exposure = (DENSITY_RANGE - hi - lo) / 2.0
+
+    normalized_median = min(max((median - lo) / span, EPS), 1.0 - EPS)
+    if abs(normalized_median - mid_target) < EPS:
+        gamma = 1.0
+    else:
+        gamma = float(np.log(normalized_median) / np.log(mid_target))
+
+    exposure = float(np.clip(exposure, -2.0, 2.0))
+    contrast = float(np.clip(contrast, 0.5, 2.5))
+    gamma = float(np.clip(gamma, 0.3, 2.5))
+    return exposure, contrast, gamma
 
 
 def sample_base_color(arr: np.ndarray, x: int, y: int, radius: int = 4) -> tuple:

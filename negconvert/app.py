@@ -87,7 +87,7 @@ class NegConvertApp:
         self.exposure_s.pack(fill="x")
         self.contrast_s = ModernSlider(sidebar, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider)
         self.contrast_s.pack(fill="x")
-        self.gamma_s = ModernSlider(sidebar, "Gamma", 0.5, 2.5, self.params.gamma, self.on_slider)
+        self.gamma_s = ModernSlider(sidebar, "Gamma", 0.3, 2.5, self.params.gamma, self.on_slider)
         self.gamma_s.pack(fill="x")
 
         ttk.Separator(sidebar).pack(fill="x", pady=8)
@@ -165,7 +165,7 @@ class NegConvertApp:
             return
 
         self.image_path = path
-        self.preview_arr = processor.downscale(self.full_arr, PREVIEW_MAX_DIM)
+        self.preview_arr = processor.downscale(self.full_arr, PREVIEW_MAX_DIM, self.is_linear)
         h, w = self.full_arr.shape[:2]
         ph, pw = self.preview_arr.shape[:2]
         self.preview_scale = ph / h
@@ -180,7 +180,7 @@ class NegConvertApp:
         self._update_base_swatch()
         self.status_lbl.configure(
             text=f"{os.path.basename(path)}  —  {w}×{h}px  —  base color estimated, click image to refine")
-        self.render_preview()
+        self._apply_auto_levels()
 
     def save_image(self):
         if self.full_arr is None:
@@ -222,19 +222,34 @@ class NegConvertApp:
 
     def reset_adjustments(self):
         self.params.reset_adjustments()
-        self.exposure_s.set(self.params.exposure)
-        self.contrast_s.set(self.params.contrast)
-        self.gamma_s.set(self.params.gamma)
         self.gain_r_s.set(self.params.gain_r)
         self.gain_g_s.set(self.params.gain_g)
         self.gain_b_s.set(self.params.gain_b)
-        self.render_preview()
+        self._apply_auto_levels()
 
     def auto_base(self):
         if self.preview_arr is None:
             return
         self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
+        self._apply_auto_levels()
+
+    def _apply_auto_levels(self):
+        """Recompute Exposure/Contrast/Gamma so this image's own density
+        histogram maps sensibly onto the output range, correcting for
+        however far off the base color estimate happens to be and for
+        however skewed this scene's own tonal distribution is
+        (see processor.auto_levels)."""
+        if self.preview_arr is None:
+            self.render_preview()
+            return
+        exposure, contrast, gamma = processor.auto_levels(self.preview_arr, self.params.base_color, self.is_linear)
+        self.params.exposure = exposure
+        self.params.contrast = contrast
+        self.params.gamma = gamma
+        self.exposure_s.set(exposure)
+        self.contrast_s.set(contrast)
+        self.gamma_s.set(gamma)
         self.render_preview()
 
     def _update_base_swatch(self):
@@ -413,7 +428,7 @@ class NegConvertApp:
             return
         self.params.base_color = processor.sample_base_color(self.preview_arr, img_x, img_y)
         self._update_base_swatch()
-        self.render_preview()
+        self._apply_auto_levels()
 
 
 def main():
