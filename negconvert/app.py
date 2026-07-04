@@ -54,6 +54,7 @@ class NegConvertApp:
         self.full_arr = None       # full resolution negative, float32 0..1
         self.preview_arr = None    # downscaled negative for interactive preview
         self.preview_scale = 1.0   # preview_dim / full_dim
+        self.is_linear = False     # True for raw/DNG sources (no sRGB gamma)
         self.tk_image = None
         self.image_path = None
 
@@ -93,21 +94,21 @@ class NegConvertApp:
 
         ttk.Label(sidebar, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 10))
 
-        self.exposure_s = Slider(sidebar, "Exposure", 0.2, 3.0, self.params.exposure, 0.01, self.on_slider)
+        self.exposure_s = Slider(sidebar, "Exposure (EV)", -2.0, 2.0, self.params.exposure, 0.01, self.on_slider)
         self.exposure_s.pack(fill="x")
-        self.contrast_s = Slider(sidebar, "Contrast", 0.5, 3.0, self.params.contrast, 0.01, self.on_slider)
+        self.contrast_s = Slider(sidebar, "Contrast", 0.5, 2.5, self.params.contrast, 0.01, self.on_slider)
         self.contrast_s.pack(fill="x")
-        self.gamma_s = Slider(sidebar, "Gamma", 0.5, 4.0, self.params.gamma, 0.01, self.on_slider)
+        self.gamma_s = Slider(sidebar, "Gamma", 0.5, 2.5, self.params.gamma, 0.01, self.on_slider)
         self.gamma_s.pack(fill="x")
 
         ttk.Separator(sidebar).pack(fill="x", pady=8)
-        ttk.Label(sidebar, text="White Balance Trim", style="Heading.TLabel").pack(anchor="w", pady=(0, 10))
+        ttk.Label(sidebar, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 10))
 
-        self.gain_r_s = Slider(sidebar, "Red", 0.5, 1.5, self.params.gain_r, 0.01, self.on_slider)
+        self.gain_r_s = Slider(sidebar, "Red", 0.7, 1.4, self.params.gain_r, 0.01, self.on_slider)
         self.gain_r_s.pack(fill="x")
-        self.gain_g_s = Slider(sidebar, "Green", 0.5, 1.5, self.params.gain_g, 0.01, self.on_slider)
+        self.gain_g_s = Slider(sidebar, "Green", 0.7, 1.4, self.params.gain_g, 0.01, self.on_slider)
         self.gain_g_s.pack(fill="x")
-        self.gain_b_s = Slider(sidebar, "Blue", 0.5, 1.5, self.params.gain_b, 0.01, self.on_slider)
+        self.gain_b_s = Slider(sidebar, "Blue", 0.7, 1.4, self.params.gain_b, 0.01, self.on_slider)
         self.gain_b_s.pack(fill="x")
 
         ttk.Separator(sidebar).pack(fill="x", pady=8)
@@ -157,7 +158,7 @@ class NegConvertApp:
         if not path:
             return
         try:
-            self.full_arr = processor.load_negative(path)
+            self.full_arr, self.is_linear = processor.load_negative(path)
         except Exception as exc:
             messagebox.showerror("Could not open image", str(exc))
             return
@@ -190,7 +191,7 @@ class NegConvertApp:
         )
         if not path:
             return
-        full_positive = processor.convert(self.full_arr, self.params)
+        full_positive = processor.convert(self.full_arr, self.params, self.is_linear)
         out = Image.fromarray(processor.to_uint8(full_positive))
         try:
             out.save(path)
@@ -235,7 +236,7 @@ class NegConvertApp:
     def render_preview(self):
         if self.preview_arr is None:
             return
-        positive = processor.convert(self.preview_arr, self.params)
+        positive = processor.convert(self.preview_arr, self.params, self.is_linear)
         img = Image.fromarray(processor.to_uint8(positive))
 
         self.canvas.update_idletasks()
