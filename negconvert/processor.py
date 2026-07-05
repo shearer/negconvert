@@ -360,6 +360,15 @@ def save_linear_dng(path: str, linear_rgb: np.ndarray) -> None:
     data16 = (np.clip(linear_rgb, 0.0, 1.0) * 65535.0 + 0.5).astype(np.uint16)
 
     extratags = [
+        (254, 4, 1, 0, False),                                      # NewSubfileType: 0 = main image.
+        # ^ Baseline TIFF tag every DNG needs to mark "this is the full
+        # image, not a thumbnail/preview" - without it, Adobe's strict
+        # parser refuses the file outright even though more lenient
+        # readers (LibRaw, darktable's rawspeed) just assume 0 and open
+        # it fine, which is exactly the darktable-yes/Lightroom-no split.
+        (271, 2, 0, "NegConvert", False),                           # Make
+        (272, 2, 0, "NegConvert", False),                           # Model
+        (274, 3, 1, 1, False),                                      # Orientation: 1 = normal
         (50706, 1, 4, (1, 4, 0, 0), False),                         # DNGVersion
         (50707, 1, 4, (1, 1, 0, 0), False),                         # DNGBackwardVersion
         (50708, 2, 0, "NegConvert", False),                         # UniqueCameraModel
@@ -369,4 +378,7 @@ def save_linear_dng(path: str, linear_rgb: np.ndarray) -> None:
         (50714, 4, 1, 0, False),                                    # BlackLevel
         (50717, 4, 1, 65535, False),                                # WhiteLevel
     ]
-    tifffile.imwrite(path, data16, photometric="linear_raw", extratags=extratags)
+    # metadata=None: suppress tifffile's default ImageDescription (a JSON
+    # blob describing the array shape) - noise a strict DNG parser doesn't
+    # expect and has no reason to need.
+    tifffile.imwrite(path, data16, photometric="linear_raw", extratags=extratags, metadata=None)
