@@ -336,16 +336,20 @@ class NegConvertApp:
             title="Save converted positive",
             initialfile=default_name,
             defaultextension=".tif",
-            filetypes=[("TIFF", "*.tif"), ("PNG", "*.png"), ("JPEG", "*.jpg")],
+            filetypes=[("TIFF", "*.tif"), ("PNG", "*.png"), ("JPEG", "*.jpg"),
+                       ("Linear DNG (raw-editable)", "*.dng")],
         )
         if not path:
             return
         x0, y0, x1, y1 = crop.crop_pixel_box(self.full_arr.shape, self.crop_rect)
         cropped = self.full_arr[y0:y1, x0:x1]
-        full_positive = processor.convert(cropped, self.params, self.is_linear)
-        out = Image.fromarray(processor.to_uint8(full_positive))
         try:
-            out.save(path)
+            if os.path.splitext(path)[1].lower() == ".dng":
+                full_positive_linear = processor.convert_linear(cropped, self.params, self.is_linear)
+                processor.save_linear_dng(path, full_positive_linear)
+            else:
+                full_positive = processor.convert(cropped, self.params, self.is_linear)
+                Image.fromarray(processor.to_uint8(full_positive)).save(path)
         except Exception as exc:
             messagebox.showerror("Could not save image", str(exc))
             return

@@ -260,8 +260,16 @@ def linear_to_srgb(c: np.ndarray) -> np.ndarray:
     return np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1.0 / 2.4) - 0.055)
 
 
-def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndarray:
-    """Apply the full negative->positive pipeline. Returns float32 0..1 sRGB."""
+def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndarray:
+    """Run the full negative->positive pipeline, stopping *before* the final
+    sRGB gamma encode. Returns float32 0..1 linear-light RGB.
+
+    `convert()` just gamma-encodes this for display/standard image formats.
+    DNG export needs the linear version directly: a DNG's LinearRaw data is
+    defined to be actual linear light, so gamma-encoded values written into
+    one would make every raw-processing tool that opens it apply its own
+    linear-to-display rendering on top of already-display-encoded data.
+    """
     base = np.array(params.base_color, dtype=np.float32)
 
     lin = arr if is_linear else srgb_to_linear(arr)
@@ -295,9 +303,70 @@ def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndar
         luma = np.dot(output_linear, LUMA_WEIGHTS)[..., None]
         output_linear = np.clip(luma + (output_linear - luma) * params.saturation, 0.0, 1.0)
 
-    output = linear_to_srgb(output_linear)
-    return np.clip(output, 0.0, 1.0)
+    return output_linear
+
+
+def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndarray:
+    """Apply the full negative->positive pipeline. Returns float32 0..1 sRGB."""
+    output_linear = convert_linear(arr, params, is_linear)
+    return np.clip(linear_to_srgb(output_linear), 0.0, 1.0)
 
 
 def to_uint8(arr: np.ndarray) -> np.ndarray:
     return (np.clip(arr, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+
+
+# XYZ(D65) -> linear-sRGB primaries. DNG's ColorMatrix1 is defined as the
+# matrix from the profile connection space (XYZ, under CalibrationIlluminant1)
+# to "camera native" RGB - since our data already *is* linear sRGB primaries,
+# that's exactly this well-known standard matrix (Bruce Lindbloom's XYZ->sRGB).
+_XYZ_TO_SRGB = (
+    3.2404542, -1.5371385, -0.4985314,
+    -0.9692660, 1.8760108, 0.0415560,
+    0.0556434, -0.2040259, 1.0572252,
+)
+_D65_ILLUMINANT = 21  # DNG LightSource enum value for D65
+
+
+def _to_rational_pairs(values, scale=1_000_000):
+    flat = []
+    for v in values:
+        flat.append(int(round(v * scale)))
+        flat.append(scale)
+    return flat
+
+
+def save_linear_dng(path: str, linear_rgb: np.ndarray) -> None:
+    """Save a converted positive as a 16-bit "Linear DNG": non-mosaiced raw
+    data (PhotometricInterpretation=LinearRaw), openable in Lightroom,
+    Capture One, or darktable as a raw file and given further raw-style
+    adjustment (exposure, white balance, highlight recovery) there, rather
+    than being a final "baked" image the way a TIFF/PNG/JPEG export is.
+
+    `linear_rgb` must be *linear light* (e.g. from `convert_linear()`, not
+    `convert()`) - a DNG's LinearRaw data is defined to be linear, and
+    writing gamma-encoded values into one would make raw-processing tools
+    apply their own linear-to-display rendering on top of already-encoded
+    data, effectively double-encoding it.
+    """
+    try:
+        import tifffile
+    except ImportError as exc:
+        raise RuntimeError(
+            "Saving a DNG requires the 'tifffile' package. Install it with:\n"
+            "    pip install tifffile"
+        ) from exc
+
+    data16 = (np.clip(linear_rgb, 0.0, 1.0) * 65535.0 + 0.5).astype(np.uint16)
+
+    extratags = [
+        (50706, 1, 4, (1, 4, 0, 0), False),                         # DNGVersion
+        (50707, 1, 4, (1, 1, 0, 0), False),                         # DNGBackwardVersion
+        (50708, 2, 0, "NegConvert", False),                         # UniqueCameraModel
+        (50721, 10, 9, _to_rational_pairs(_XYZ_TO_SRGB), False),    # ColorMatrix1
+        (50728, 5, 3, _to_rational_pairs([1.0, 1.0, 1.0]), False),  # AsShotNeutral
+        (50778, 3, 1, _D65_ILLUMINANT, False),                      # CalibrationIlluminant1
+        (50714, 4, 1, 0, False),                                    # BlackLevel
+        (50717, 4, 1, 65535, False),                                # WhiteLevel
+    ]
+    tifffile.imwrite(path, data16, photometric="linear_raw", extratags=extratags)
