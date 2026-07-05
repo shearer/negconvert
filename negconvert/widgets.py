@@ -1,7 +1,10 @@
 """Custom canvas-drawn widgets for a modern look ttk can't easily give us:
-pill-shaped buttons and a slider with a filled track and round handle."""
+pill-shaped buttons, a slider with a filled track and round handle, and an
+RGB histogram."""
 import tkinter as tk
 import tkinter.font as tkfont
+
+import numpy as np
 
 from . import theme
 
@@ -152,3 +155,50 @@ class ModernSlider(tk.Frame):
         self._value = value
         self._value_lbl.configure(text=self._fmt.format(value))
         self._redraw()
+
+
+class Histogram(tk.Canvas):
+    """An RGB histogram of a uint8 HxWx3 image, redrawn on demand."""
+
+    BINS = 64
+    CHANNEL_COLORS = ("#ff6b6b", "#5fd66b", "#5c9fff")  # R, G, B
+
+    def __init__(self, parent, height=120, bg=None):
+        bg = bg or theme.CANVAS_BG
+        super().__init__(parent, height=height, bg=bg, highlightthickness=0)
+        self._image = None
+        self.bind("<Configure>", lambda e: self._redraw())
+
+    def update_image(self, image_uint8):
+        self._image = image_uint8
+        self._redraw()
+
+    def clear(self):
+        self._image = None
+        self.delete("all")
+
+    def _redraw(self):
+        self.delete("all")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w <= 1 or h <= 1 or self._image is None:
+            return
+
+        pad_x, pad_y = 4, 6
+        plot_w = max(1, w - 2 * pad_x)
+        plot_h = max(1, h - 2 * pad_y)
+
+        for ch, color in enumerate(self.CHANNEL_COLORS):
+            channel = self._image[..., ch].ravel()
+            counts, _ = np.histogram(channel, bins=self.BINS, range=(0, 255))
+            counts = np.log1p(counts.astype(np.float64))
+            peak = counts.max()
+            norm = counts / peak if peak > 0 else counts
+
+            points = []
+            for i, v in enumerate(norm):
+                x = pad_x + (i / (self.BINS - 1)) * plot_w
+                y = pad_y + (1.0 - v) * plot_h
+                points.extend((x, y))
+            if len(points) >= 4:
+                self.create_line(*points, fill=color, width=1.6, smooth=True, tags=("hist",))

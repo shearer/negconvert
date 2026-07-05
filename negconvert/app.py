@@ -10,11 +10,12 @@ from . import crop
 from . import processor
 from . import theme
 from . import widgets
-from .widgets import ModernSlider, PillButton
+from .widgets import Histogram, ModernSlider, PillButton
 
 PREVIEW_MAX_DIM = 900
 HANDLE_HIT_RADIUS = 12
 CROP_HANDLE_R = 8
+TAB_COLORS, TAB_CROP, TAB_EXPORT = 0, 1, 2
 
 
 class NegConvertApp:
@@ -50,15 +51,10 @@ class NegConvertApp:
 
         PillButton(toolbar, "Open Negative…", command=self.open_image,
                    bg=theme.PANEL).pack(side="left", padx=4)
-        self.crop_btn = PillButton(toolbar, "Crop", command=self.toggle_crop,
-                                    bg=theme.PANEL)
-        self.crop_btn.pack(side="left", padx=4)
         PillButton(toolbar, "Auto Base Color", command=self.auto_base,
                    bg=theme.PANEL).pack(side="left", padx=4)
         PillButton(toolbar, "Reset Adjustments", command=self.reset_adjustments,
                    bg=theme.PANEL).pack(side="left", padx=4)
-        PillButton(toolbar, "Save As…", command=self.save_image, accent=True,
-                   bg=theme.PANEL, font=("Helvetica", 11, "bold")).pack(side="right", padx=4)
 
         body = ttk.Frame(self.root)
         body.pack(side="top", fill="both", expand=True)
@@ -76,55 +72,87 @@ class NegConvertApp:
             fill=theme.TEXT_DIM, font=("Helvetica", 13), justify="center")
         self.canvas.bind("<Configure>", self._center_placeholder)
 
-        # sidebar
-        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=18, width=300)
+        # sidebar: histogram (upper) + tabbed controls (lower)
+        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=18, width=320)
         sidebar.pack(side="right", fill="y")
         sidebar.pack_propagate(False)
 
-        ttk.Label(sidebar, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(sidebar, text="Histogram", style="Heading.TLabel").pack(anchor="w", pady=(0, 10))
+        self.histogram = Histogram(sidebar, height=120)
+        self.histogram.pack(fill="x", pady=(0, 16))
 
-        self.exposure_s = ModernSlider(sidebar, "Exposure (EV)", -2.0, 2.0, self.params.exposure, self.on_slider)
+        ttk.Separator(sidebar).pack(fill="x", pady=(0, 12))
+
+        self.notebook = ttk.Notebook(sidebar)
+        self.notebook.pack(fill="both", expand=True)
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+
+        colors_tab = ttk.Frame(self.notebook, style="Panel.TFrame", padding=(4, 14))
+        crop_tab = ttk.Frame(self.notebook, style="Panel.TFrame", padding=(4, 14))
+        export_tab = ttk.Frame(self.notebook, style="Panel.TFrame", padding=(4, 14))
+        self.notebook.add(colors_tab, text="Colors")
+        self.notebook.add(crop_tab, text="Crop")
+        self.notebook.add(export_tab, text="Export")
+
+        self._build_colors_tab(colors_tab)
+        self._build_crop_tab(crop_tab)
+        self._build_export_tab(export_tab)
+
+    def _build_colors_tab(self, parent):
+        ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
+
+        self.exposure_s = ModernSlider(parent, "Exposure (EV)", -2.0, 2.0, self.params.exposure, self.on_slider)
         self.exposure_s.pack(fill="x")
-        self.contrast_s = ModernSlider(sidebar, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider)
+        self.contrast_s = ModernSlider(parent, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider)
         self.contrast_s.pack(fill="x")
-        self.gamma_s = ModernSlider(sidebar, "Gamma", 0.3, 2.5, self.params.gamma, self.on_slider)
+        self.gamma_s = ModernSlider(parent, "Gamma", 0.3, 2.5, self.params.gamma, self.on_slider)
         self.gamma_s.pack(fill="x")
 
-        ttk.Separator(sidebar).pack(fill="x", pady=8)
-        ttk.Label(sidebar, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Separator(parent).pack(fill="x", pady=8)
+        ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
 
-        self.gain_r_s = ModernSlider(sidebar, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider)
+        self.gain_r_s = ModernSlider(parent, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider)
         self.gain_r_s.pack(fill="x")
-        self.gain_g_s = ModernSlider(sidebar, "Green", 0.7, 1.4, self.params.gain_g, self.on_slider)
+        self.gain_g_s = ModernSlider(parent, "Green", 0.7, 1.4, self.params.gain_g, self.on_slider)
         self.gain_g_s.pack(fill="x")
-        self.gain_b_s = ModernSlider(sidebar, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider)
+        self.gain_b_s = ModernSlider(parent, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider)
         self.gain_b_s.pack(fill="x")
 
-        ttk.Separator(sidebar).pack(fill="x", pady=8)
-        ttk.Label(sidebar, text="Crop", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
-        self.aspect_var = tk.StringVar(value=crop.ASPECT_PRESETS[0][0])
-        aspect_box = ttk.Combobox(sidebar, textvariable=self.aspect_var, state="readonly",
-                                   values=[label for label, _ in crop.ASPECT_PRESETS])
-        aspect_box.pack(fill="x", pady=(0, 8))
-        aspect_box.bind("<<ComboboxSelected>>", self.on_aspect_change)
-        PillButton(sidebar, "Reset Crop", command=self.reset_crop,
-                   bg=theme.PANEL).pack(anchor="w")
-        ttk.Label(sidebar, text="Click 'Crop' above, then drag the\ncorner handles or the box itself.",
-                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(8, 0))
-
-        ttk.Separator(sidebar).pack(fill="x", pady=8)
-        ttk.Label(sidebar, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
-        swatch_row = ttk.Frame(sidebar, style="Panel.TFrame")
+        ttk.Separator(parent).pack(fill="x", pady=8)
+        ttk.Label(parent, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
+        swatch_row = ttk.Frame(parent, style="Panel.TFrame")
         swatch_row.pack(fill="x")
         self.base_swatch = tk.Canvas(swatch_row, width=32, height=32, bg=theme.PANEL,
                                       highlightthickness=0)
         self.base_swatch.pack(side="left")
         self.base_lbl = ttk.Label(swatch_row, text="not sampled", style="Panel.TLabel")
         self.base_lbl.pack(side="left", padx=8)
-        ttk.Label(sidebar, text="Click anywhere on the image to sample\nthe orange mask from unexposed film.",
+        ttk.Label(parent, text="Click anywhere on the image to sample\nthe orange mask from unexposed film.",
                   style="Panel.TLabel", justify="left").pack(anchor="w", pady=(6, 0))
 
         self._update_base_swatch()
+
+    def _build_crop_tab(self, parent):
+        ttk.Label(parent, text="Crop", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
+        self.aspect_var = tk.StringVar(value=crop.ASPECT_PRESETS[0][0])
+        aspect_box = ttk.Combobox(parent, textvariable=self.aspect_var, state="readonly",
+                                   values=[label for label, _ in crop.ASPECT_PRESETS])
+        aspect_box.pack(fill="x", pady=(0, 8))
+        aspect_box.bind("<<ComboboxSelected>>", self.on_aspect_change)
+        PillButton(parent, "Reset Crop", command=self.reset_crop,
+                   bg=theme.PANEL).pack(anchor="w")
+        ttk.Label(parent, text="While this tab is open, drag the corner\n"
+                               "handles or the box itself on the image.\n"
+                               "Switch tabs to preview the cropped result.",
+                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(8, 0))
+
+    def _build_export_tab(self, parent):
+        ttk.Label(parent, text="Export", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(parent, text="Save the converted positive - with any\n"
+                               "crop currently set - as TIFF, PNG, or JPEG.",
+                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(0, 14))
+        PillButton(parent, "Save As…", command=self.save_image, accent=True,
+                   font=("Helvetica", 11, "bold")).pack(anchor="w")
 
         # status bar
         status = ttk.Frame(self.root, style="Status.TFrame", padding=(10, 4))
@@ -171,10 +199,10 @@ class NegConvertApp:
         self.preview_scale = ph / h
 
         self.crop_mode = False
-        self.crop_btn.set_active(False)
         self.crop_rect = crop.FULL_RECT
         self.aspect_ratio = None
         self.aspect_var.set(crop.ASPECT_PRESETS[0][0])
+        self.notebook.select(TAB_COLORS)
 
         self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
@@ -272,7 +300,9 @@ class NegConvertApp:
             origin_px = (x0, y0)
 
         positive = processor.convert(source, self.params, self.is_linear)
-        img = Image.fromarray(processor.to_uint8(positive))
+        positive_uint8 = processor.to_uint8(positive)
+        img = Image.fromarray(positive_uint8)
+        self.histogram.update_image(positive_uint8)
 
         self.canvas.update_idletasks()
         cw = max(self.canvas.winfo_width(), 100)
@@ -297,12 +327,13 @@ class NegConvertApp:
 
     # ---------- crop tool ----------
 
-    def toggle_crop(self):
+    def on_tab_changed(self, _evt=None):
         if self.full_arr is None:
             return
-        self.crop_mode = not self.crop_mode
-        self.crop_btn.set_active(self.crop_mode)
-        self.render_preview()
+        is_crop_tab = self.notebook.index(self.notebook.select()) == TAB_CROP
+        if is_crop_tab != self.crop_mode:
+            self.crop_mode = is_crop_tab
+            self.render_preview()
 
     def reset_crop(self):
         self.crop_rect = crop.FULL_RECT
