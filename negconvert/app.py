@@ -120,12 +120,12 @@ class NegConvertApp:
         ttk.Separator(parent).pack(fill="x", pady=4)
         ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
 
-        self.gain_r_s = ModernSlider(parent, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider, default=1.0)
-        self.gain_r_s.pack(fill="x")
-        self.gain_g_s = ModernSlider(parent, "Green", 0.7, 1.4, self.params.gain_g, self.on_slider, default=1.0)
-        self.gain_g_s.pack(fill="x")
-        self.gain_b_s = ModernSlider(parent, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider, default=1.0)
-        self.gain_b_s.pack(fill="x")
+        self.shift_r_s = ModernSlider(parent, "Red", -0.5, 0.5, self.params.shift_r, self.on_slider, default=0.0)
+        self.shift_r_s.pack(fill="x")
+        self.shift_g_s = ModernSlider(parent, "Green", -0.5, 0.5, self.params.shift_g, self.on_slider, default=0.0)
+        self.shift_g_s.pack(fill="x")
+        self.shift_b_s = ModernSlider(parent, "Blue", -0.5, 0.5, self.params.shift_b, self.on_slider, default=0.0)
+        self.shift_b_s.pack(fill="x")
 
         ttk.Separator(parent).pack(fill="x", pady=4)
         ttk.Label(parent, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
@@ -254,17 +254,17 @@ class NegConvertApp:
         self.params.contrast = self.contrast_s.get()
         self.params.gamma = self.gamma_s.get()
         self.params.saturation = self.saturation_s.get()
-        self.params.gain_r = self.gain_r_s.get()
-        self.params.gain_g = self.gain_g_s.get()
-        self.params.gain_b = self.gain_b_s.get()
+        self.params.shift_r = self.shift_r_s.get()
+        self.params.shift_g = self.shift_g_s.get()
+        self.params.shift_b = self.shift_b_s.get()
         self.render_preview()
 
     def reset_adjustments(self):
         self.params.reset_adjustments()
         self.saturation_s.set(self.params.saturation)
-        self.gain_r_s.set(self.params.gain_r)
-        self.gain_g_s.set(self.params.gain_g)
-        self.gain_b_s.set(self.params.gain_b)
+        self.shift_r_s.set(self.params.shift_r)
+        self.shift_g_s.set(self.params.shift_g)
+        self.shift_b_s.set(self.params.shift_b)
         self._apply_auto_levels()
 
     def auto_base(self):

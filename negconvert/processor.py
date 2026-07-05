@@ -42,18 +42,18 @@ class Params:
     exposure: float = 0.0     # stops, shifts the whole density image
     contrast: float = 1.0     # scales density spread around the mid pivot
     gamma: float = 1.0        # display gamma trim, applied after tone-mapping
-    gain_r: float = 1.0       # per-channel density (color balance) multiplier
-    gain_g: float = 1.0
-    gain_b: float = 1.0
+    shift_r: float = 0.0      # per-channel density (color balance) shift, in stops
+    shift_g: float = 0.0
+    shift_b: float = 0.0
     saturation: float = 1.0   # chroma scale around luma, applied at the end
 
     def reset_adjustments(self):
         self.exposure = 0.0
         self.contrast = 1.0
         self.gamma = 1.0
-        self.gain_r = 1.0
-        self.gain_g = 1.0
-        self.gain_b = 1.0
+        self.shift_r = 0.0
+        self.shift_g = 0.0
+        self.shift_b = 0.0
         self.saturation = 1.0
 
 
@@ -228,8 +228,18 @@ def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndar
     ratio = np.clip(lin / (base_lin + EPS), EPS, None)
     density = -np.log2(ratio)  # ~0 at the film base, grows with exposure
 
-    gains = np.array([params.gain_r, params.gain_g, params.gain_b], dtype=np.float32)
-    density = density * gains
+    # Color balance is an *additive* per-channel density shift, not a
+    # multiplicative gain: density can be negative (e.g. a pixel slightly
+    # brighter than the sampled base - common near highlights or noise),
+    # and multiplying a negative value by a larger gain pushes it further
+    # *away* from zero - the opposite direction from what happens to the
+    # (much more common) positive-density pixels. That made the same slider
+    # move increase color in most of the image but decrease it in some
+    # spots, depending on the mix of pixel signs in that particular image.
+    # An additive shift moves every pixel the same direction regardless of
+    # its density's sign.
+    shifts = np.array([params.shift_r, params.shift_g, params.shift_b], dtype=np.float32)
+    density = density + shifts
 
     density = density + params.exposure
 
