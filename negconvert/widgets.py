@@ -97,8 +97,8 @@ class PillButton(tk.Canvas):
 class ModernSlider(tk.Frame):
     """A labeled slider with a filled rounded track and a round handle."""
 
-    TRACK_H = 6
-    HANDLE_R = 9
+    TRACK_H = 4
+    HANDLE_R = 7
 
     def __init__(self, parent, label, frm, to, initial, on_change, value_fmt="{:.2f}", bg=theme.PANEL,
                  default=None):
@@ -115,7 +115,7 @@ class ModernSlider(tk.Frame):
         tk.Label(header, text=label, bg=bg, fg=theme.TEXT,
                   font=("Helvetica", 11), anchor="w").pack(side="left")
         self._value_lbl = tk.Label(header, text=value_fmt.format(initial), bg=bg,
-                                    fg=theme.ACCENT, font=("Helvetica", 11, "bold"), anchor="e")
+                                    fg=theme.ACCENT, font=("Helvetica", 11), anchor="e")
         self._value_lbl.pack(side="right")
 
         self.canvas = tk.Canvas(self, height=22, bg=bg, highlightthickness=0, cursor="hand2")
@@ -143,7 +143,7 @@ class ModernSlider(tk.Frame):
         if hx > x0:
             c.create_line(x0, y, hx, y, fill=theme.ACCENT, width=self.TRACK_H, capstyle=tk.ROUND)
         c.create_oval(hx - self.HANDLE_R, y - self.HANDLE_R, hx + self.HANDLE_R, y + self.HANDLE_R,
-                       fill=theme.HANDLE, outline=theme.ACCENT_DARK, width=2)
+                       fill=theme.HANDLE, outline=theme.ACCENT_DARK, width=1)
 
     def _on_pointer(self, event):
         x0, x1 = self._bounds()
