@@ -102,7 +102,7 @@ class NegConvertApp:
         colors_tab.tkraise()
 
     def _build_colors_tab(self, parent):
-        ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
 
         self.exposure_s = ModernSlider(parent, "Exposure (EV)", -4.0, 4.0, self.params.exposure, self.on_slider)
         self.exposure_s.pack(fill="x")
@@ -111,8 +111,8 @@ class NegConvertApp:
         self.gamma_s = ModernSlider(parent, "Gamma", 0.3, 2.5, self.params.gamma, self.on_slider)
         self.gamma_s.pack(fill="x")
 
-        ttk.Separator(parent).pack(fill="x", pady=8)
-        ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Separator(parent).pack(fill="x", pady=5)
+        ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
 
         self.gain_r_s = ModernSlider(parent, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider)
         self.gain_r_s.pack(fill="x")
@@ -121,8 +121,8 @@ class NegConvertApp:
         self.gain_b_s = ModernSlider(parent, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider)
         self.gain_b_s.pack(fill="x")
 
-        ttk.Separator(parent).pack(fill="x", pady=8)
-        ttk.Label(parent, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Separator(parent).pack(fill="x", pady=5)
+        ttk.Label(parent, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 5))
         swatch_row = ttk.Frame(parent, style="Panel.TFrame")
         swatch_row.pack(fill="x")
         self.base_swatch = tk.Canvas(swatch_row, width=32, height=32, bg=theme.PANEL,
@@ -131,7 +131,7 @@ class NegConvertApp:
         self.base_lbl = ttk.Label(swatch_row, text="not sampled", style="Panel.TLabel")
         self.base_lbl.pack(side="left", padx=8)
         ttk.Label(parent, text="Click anywhere on the image to sample\nthe orange mask from unexposed film.",
-                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(6, 0))
+                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(4, 0))
 
         self._update_base_swatch()
 

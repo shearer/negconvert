@@ -114,8 +114,8 @@ class ModernSlider(tk.Frame):
                                     fg=theme.ACCENT, font=("Helvetica", 11, "bold"), anchor="e")
         self._value_lbl.pack(side="right")
 
-        self.canvas = tk.Canvas(self, height=28, bg=bg, highlightthickness=0, cursor="hand2")
-        self.canvas.pack(fill="x", pady=(6, 16))
+        self.canvas = tk.Canvas(self, height=24, bg=bg, highlightthickness=0, cursor="hand2")
+        self.canvas.pack(fill="x", pady=(2, 6))
         self.canvas.bind("<Configure>", lambda e: self._redraw())
         self.canvas.bind("<Button-1>", self._on_pointer)
         self.canvas.bind("<B1-Motion>", self._on_pointer)
@@ -129,7 +129,7 @@ class ModernSlider(tk.Frame):
         c = self.canvas
         c.delete("all")
         x0, x1 = self._bounds()
-        y = 14
+        y = max(c.winfo_height(), 1) / 2
         span = self._to - self._frm
         frac = 0.0 if span == 0 else min(1.0, max(0.0, (self._value - self._frm) / span))
         hx = x0 + frac * (x1 - x0)
