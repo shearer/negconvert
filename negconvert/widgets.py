@@ -98,11 +98,13 @@ class ModernSlider(tk.Frame):
     TRACK_H = 6
     HANDLE_R = 9
 
-    def __init__(self, parent, label, frm, to, initial, on_change, value_fmt="{:.2f}", bg=theme.PANEL):
+    def __init__(self, parent, label, frm, to, initial, on_change, value_fmt="{:.2f}", bg=theme.PANEL,
+                 default=None):
         super().__init__(parent, bg=bg)
         self._frm = frm
         self._to = to
         self._value = initial
+        self._default = initial if default is None else default
         self._on_change = on_change
         self._fmt = value_fmt
 
@@ -119,6 +121,7 @@ class ModernSlider(tk.Frame):
         self.canvas.bind("<Configure>", lambda e: self._redraw())
         self.canvas.bind("<Button-1>", self._on_pointer)
         self.canvas.bind("<B1-Motion>", self._on_pointer)
+        self.canvas.bind("<Double-Button-1>", self._on_double_click)
 
     def _bounds(self):
         w = max(self.canvas.winfo_width(), 1)
@@ -148,6 +151,12 @@ class ModernSlider(tk.Frame):
         self._redraw()
         self._on_change()
 
+    def _on_double_click(self, _event):
+        self._value = self._default
+        self._value_lbl.configure(text=self._fmt.format(self._value))
+        self._redraw()
+        self._on_change()
+
     def get(self):
         return self._value
 
@@ -155,6 +164,11 @@ class ModernSlider(tk.Frame):
         self._value = value
         self._value_lbl.configure(text=self._fmt.format(value))
         self._redraw()
+
+    def set_default(self, value):
+        """Update what a double-click resets to, without touching the
+        current displayed value (e.g. re-baselining after auto-levels)."""
+        self._default = value
 
 
 def _hex_to_rgb(hex_color):

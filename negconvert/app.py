@@ -104,23 +104,27 @@ class NegConvertApp:
     def _build_colors_tab(self, parent):
         ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
 
-        self.exposure_s = ModernSlider(parent, "Exposure (EV)", -4.0, 4.0, self.params.exposure, self.on_slider)
+        self.exposure_s = ModernSlider(parent, "Exposure (EV)", -4.0, 4.0, self.params.exposure, self.on_slider,
+                                        default=0.0)
         self.exposure_s.pack(fill="x")
-        self.contrast_s = ModernSlider(parent, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider)
+        self.contrast_s = ModernSlider(parent, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider,
+                                        default=1.0)
         self.contrast_s.pack(fill="x")
-        self.gamma_s = ModernSlider(parent, "Gamma", 0.3, 2.5, self.params.gamma, self.on_slider)
+        self.gamma_s = ModernSlider(parent, "Gamma", 0.3, 2.5, self.params.gamma, self.on_slider,
+                                     default=1.0)
         self.gamma_s.pack(fill="x")
-        self.saturation_s = ModernSlider(parent, "Saturation", 0.0, 2.0, self.params.saturation, self.on_slider)
+        self.saturation_s = ModernSlider(parent, "Saturation", 0.0, 2.0, self.params.saturation, self.on_slider,
+                                          default=1.0)
         self.saturation_s.pack(fill="x")
 
         ttk.Separator(parent).pack(fill="x", pady=4)
         ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
 
-        self.gain_r_s = ModernSlider(parent, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider)
+        self.gain_r_s = ModernSlider(parent, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider, default=1.0)
         self.gain_r_s.pack(fill="x")
-        self.gain_g_s = ModernSlider(parent, "Green", 0.7, 1.4, self.params.gain_g, self.on_slider)
+        self.gain_g_s = ModernSlider(parent, "Green", 0.7, 1.4, self.params.gain_g, self.on_slider, default=1.0)
         self.gain_g_s.pack(fill="x")
-        self.gain_b_s = ModernSlider(parent, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider)
+        self.gain_b_s = ModernSlider(parent, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider, default=1.0)
         self.gain_b_s.pack(fill="x")
 
         ttk.Separator(parent).pack(fill="x", pady=4)
@@ -275,7 +279,11 @@ class NegConvertApp:
         histogram maps sensibly onto the output range, correcting for
         however far off the base color estimate happens to be and for
         however skewed this scene's own tonal distribution is
-        (see processor.auto_levels)."""
+        (see processor.auto_levels).
+
+        Also re-baselines what a double-click on those three sliders resets
+        to, so "reset" means "back to the auto-leveled result for this base
+        color sample" rather than a fixed neutral value."""
         if self.preview_arr is None:
             self.render_preview()
             return
@@ -286,6 +294,9 @@ class NegConvertApp:
         self.exposure_s.set(exposure)
         self.contrast_s.set(contrast)
         self.gamma_s.set(gamma)
+        self.exposure_s.set_default(exposure)
+        self.contrast_s.set_default(contrast)
+        self.gamma_s.set_default(gamma)
         self.render_preview()
 
     def _update_base_swatch(self):
