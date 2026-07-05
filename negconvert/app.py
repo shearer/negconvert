@@ -191,7 +191,7 @@ class NegConvertApp:
     def _build_export_tab(self, parent):
         ttk.Label(parent, text="Export", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
         ttk.Label(parent, text="Save the converted positive - with any\n"
-                               "crop currently set - as TIFF, PNG, or JPEG.",
+                               "crop currently set - as DNG, TIFF, PNG, or JPEG.",
                   style="Panel.TLabel", justify="left").pack(anchor="w", pady=(0, 14))
         PillButton(parent, "Save As…", command=self.save_image, accent=True,
                    font=("Helvetica", 11, "bold")).pack(anchor="w")
