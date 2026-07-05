@@ -45,11 +45,4 @@ def apply(root):
     root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
     root.option_add("*TCombobox*Listbox.selectForeground", "#2b2b2b")
 
-    style.configure("TNotebook", background=PANEL, borderwidth=0, tabmargins=(0, 4, 0, 0))
-    style.configure("TNotebook.Tab", background=PANEL_DARK, foreground=TEXT_DIM,
-                    padding=(16, 9), font=("Helvetica", 11), borderwidth=0)
-    style.map("TNotebook.Tab",
-              background=[("selected", PANEL)],
-              foreground=[("selected", TEXT)])
-
     return style

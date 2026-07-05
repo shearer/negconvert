@@ -10,7 +10,7 @@ from . import crop
 from . import processor
 from . import theme
 from . import widgets
-from .widgets import Histogram, ModernSlider, PillButton
+from .widgets import Histogram, ModernSlider, PillButton, TabBar
 
 PREVIEW_MAX_DIM = 900
 HANDLE_HIT_RADIUS = 12
@@ -22,7 +22,7 @@ class NegConvertApp:
     def __init__(self, root):
         self.root = root
         self.root.title("NegConvert — C-41 Negative Converter")
-        self.root.geometry("1200x800")
+        self.root.geometry("1280x820")
         theme.apply(root)
 
         self.params = processor.Params()
@@ -73,7 +73,7 @@ class NegConvertApp:
         self.canvas.bind("<Configure>", self._center_placeholder)
 
         # sidebar: histogram (upper) + tabbed controls (lower)
-        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=18, width=320)
+        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=16, width=380)
         sidebar.pack(side="right", fill="y")
         sidebar.pack_propagate(False)
 
@@ -81,22 +81,25 @@ class NegConvertApp:
         self.histogram = Histogram(sidebar, height=120)
         self.histogram.pack(fill="x", pady=(0, 16))
 
-        ttk.Separator(sidebar).pack(fill="x", pady=(0, 12))
+        ttk.Separator(sidebar).pack(fill="x", pady=(0, 14))
 
-        self.notebook = ttk.Notebook(sidebar)
-        self.notebook.pack(fill="both", expand=True)
-        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        self.tab_bar = TabBar(sidebar, ["Colors", "Crop", "Export"], on_change=self.on_tab_changed)
+        self.tab_bar.pack(fill="x", pady=(0, 14))
 
-        colors_tab = ttk.Frame(self.notebook, style="Panel.TFrame", padding=(4, 14))
-        crop_tab = ttk.Frame(self.notebook, style="Panel.TFrame", padding=(4, 14))
-        export_tab = ttk.Frame(self.notebook, style="Panel.TFrame", padding=(4, 14))
-        self.notebook.add(colors_tab, text="Colors")
-        self.notebook.add(crop_tab, text="Crop")
-        self.notebook.add(export_tab, text="Export")
+        tab_content = ttk.Frame(sidebar, style="Panel.TFrame")
+        tab_content.pack(fill="both", expand=True)
+
+        colors_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
+        crop_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
+        export_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
+        for frame in (colors_tab, crop_tab, export_tab):
+            frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._tab_frames = [colors_tab, crop_tab, export_tab]
 
         self._build_colors_tab(colors_tab)
         self._build_crop_tab(crop_tab)
         self._build_export_tab(export_tab)
+        colors_tab.tkraise()
 
     def _build_colors_tab(self, parent):
         ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 12))
@@ -202,7 +205,8 @@ class NegConvertApp:
         self.crop_rect = crop.FULL_RECT
         self.aspect_ratio = None
         self.aspect_var.set(crop.ASPECT_PRESETS[0][0])
-        self.notebook.select(TAB_COLORS)
+        self.tab_bar.select(TAB_COLORS)
+        self._tab_frames[TAB_COLORS].tkraise()
 
         self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
@@ -327,10 +331,11 @@ class NegConvertApp:
 
     # ---------- crop tool ----------
 
-    def on_tab_changed(self, _evt=None):
+    def on_tab_changed(self, index):
+        self._tab_frames[index].tkraise()
         if self.full_arr is None:
             return
-        is_crop_tab = self.notebook.index(self.notebook.select()) == TAB_CROP
+        is_crop_tab = index == TAB_CROP
         if is_crop_tab != self.crop_mode:
             self.crop_mode = is_crop_tab
             self.render_preview()

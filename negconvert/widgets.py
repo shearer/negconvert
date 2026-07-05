@@ -202,3 +202,33 @@ class Histogram(tk.Canvas):
                 points.extend((x, y))
             if len(points) >= 4:
                 self.create_line(*points, fill=color, width=1.6, smooth=True, tags=("hist",))
+
+
+class TabBar(tk.Frame):
+    """A row of rounded pill tabs, exactly one selected at a time - a
+    modern, fully-rounded stand-in for ttk.Notebook's square tab strip."""
+
+    def __init__(self, parent, labels, on_change, bg=None):
+        bg = bg or theme.PANEL
+        super().__init__(parent, bg=bg)
+        self._on_change = on_change
+        self._buttons = []
+        for i, label in enumerate(labels):
+            btn = PillButton(self, label, command=lambda i=i: self.select(i), bg=bg,
+                              padx=16, pady=8, font=("Helvetica", 11))
+            btn.pack(side="left", padx=(0, 8) if i < len(labels) - 1 else 0)
+            self._buttons.append(btn)
+        self._selected = 0
+        self._buttons[0].set_active(True)
+
+    def select(self, index):
+        if index == self._selected:
+            return
+        self._buttons[self._selected].set_active(False)
+        self._selected = index
+        self._buttons[index].set_active(True)
+        if self._on_change:
+            self._on_change(index)
+
+    def index(self):
+        return self._selected
