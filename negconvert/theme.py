@@ -7,11 +7,11 @@ PANEL_HOVER = "#787878"  # subtle hover for non-accent buttons
 PANEL_DARK = "#575757"  # status bar, well borders
 TEXT = "#f5f5f5"
 TEXT_DIM = "#cfcfcf"
-ACCENT = "#e8a33d"      # amber safelight accent
-ACCENT_DARK = "#c9862a"
+ACCENT = "#d6d6d6"      # bright grey accent
+ACCENT_DARK = "#b0b0b0"
 TROUGH = "#4a4a4a"
 CANVAS_BG = "#383838"
-HANDLE = "#f7f2e8"      # warm ivory slider handle
+HANDLE = "#f2f2f2"      # bright grey slider handle
 
 
 def apply(root):
