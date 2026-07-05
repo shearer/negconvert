@@ -10,12 +10,30 @@ from . import crop
 from . import processor
 from . import theme
 from . import widgets
-from .widgets import Histogram, ModernSlider, PillButton, TabBar
+from .widgets import Filmstrip, Histogram, ModernSlider, PillButton, TabBar
 
 PREVIEW_MAX_DIM = 900
 HANDLE_HIT_RADIUS = 12
 CROP_HANDLE_R = 8
 TAB_COLORS, TAB_CROP, TAB_EXPORT = 0, 1, 2
+
+
+class PhotoItem:
+    """Per-photo editing state, so each photo opened via 'Open Folder…' can
+    be adjusted independently. `full_arr`/`preview_arr` are loaded lazily -
+    only when the photo is first selected - so opening a folder of many
+    large DNGs doesn't decode all of them up front."""
+
+    def __init__(self, path):
+        self.path = path
+        self.full_arr = None
+        self.preview_arr = None
+        self.is_linear = False
+        self.loaded = False
+        self.params = processor.Params()
+        self.crop_rect = crop.FULL_RECT
+        self.aspect_ratio = None
+        self.auto_baseline = (0.0, 1.0, 1.0)  # (exposure, contrast, gamma) from this photo's first auto-level
 
 
 class NegConvertApp:
@@ -28,7 +46,6 @@ class NegConvertApp:
         self.params = processor.Params()
         self.full_arr = None       # full resolution negative, float32 0..1
         self.preview_arr = None    # downscaled negative for interactive preview
-        self.preview_scale = 1.0   # preview_dim / full_dim
         self.is_linear = False     # True for raw/DNG sources (no sRGB gamma)
         self.tk_image = None
         self.image_path = None
@@ -39,6 +56,9 @@ class NegConvertApp:
         self._crop_drag = None
         self._crop_handles = {}
         self._crop_rect_canvas = None
+
+        self.photos = []              # list of PhotoItem, for batch (Open Folder) editing
+        self.current_photo_index = -1
 
         self._build_layout()
         self._bind_shortcuts()
@@ -51,10 +71,22 @@ class NegConvertApp:
 
         PillButton(toolbar, "Open Negative…", command=self.open_image,
                    bg=theme.PANEL).pack(side="left", padx=4)
+        PillButton(toolbar, "Open Folder…", command=self.open_folder,
+                   bg=theme.PANEL).pack(side="left", padx=4)
         PillButton(toolbar, "Auto Base Color", command=self.auto_base,
                    bg=theme.PANEL).pack(side="left", padx=4)
         PillButton(toolbar, "Reset Adjustments", command=self.reset_adjustments,
                    bg=theme.PANEL).pack(side="left", padx=4)
+
+        # status bar and filmstrip claim the bottom first, so the body
+        # (canvas + sidebar) gets whatever space remains between them.
+        status = ttk.Frame(self.root, style="Status.TFrame", padding=(10, 4))
+        status.pack(side="bottom", fill="x")
+        self.status_lbl = ttk.Label(status, text="No image loaded", style="Status.TLabel")
+        self.status_lbl.pack(side="left")
+
+        self.filmstrip = Filmstrip(self.root, on_select=self._select_photo)
+        self.filmstrip.pack(side="bottom", fill="x")
 
         body = ttk.Frame(self.root)
         body.pack(side="top", fill="both", expand=True)
@@ -68,7 +100,8 @@ class NegConvertApp:
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
         self.canvas_placeholder = self.canvas.create_text(
-            0, 0, text="Open a negative scan to begin\n(click the image later to sample the film base color)",
+            0, 0, text="Open a negative scan (or a folder of them) to begin\n"
+                       "(click the image later to sample the film base color)",
             fill=theme.TEXT_DIM, font=("Helvetica", 13), justify="center")
         self.canvas.bind("<Configure>", self._center_placeholder)
 
@@ -163,12 +196,6 @@ class NegConvertApp:
         PillButton(parent, "Save As…", command=self.save_image, accent=True,
                    font=("Helvetica", 11, "bold")).pack(anchor="w")
 
-        # status bar
-        status = ttk.Frame(self.root, style="Status.TFrame", padding=(10, 4))
-        status.pack(side="bottom", fill="x")
-        self.status_lbl = ttk.Label(status, text="No image loaded", style="Status.TLabel")
-        self.status_lbl.pack(side="left")
-
     def _bind_shortcuts(self):
         self.root.bind("<Command-o>", lambda e: self.open_image())
         self.root.bind("<Control-o>", lambda e: self.open_image())
@@ -195,30 +222,107 @@ class NegConvertApp:
         )
         if not path:
             return
-        try:
-            self.full_arr, self.is_linear = processor.load_negative(path)
-        except Exception as exc:
-            messagebox.showerror("Could not open image", str(exc))
+        self._load_photo_list([path])
+
+    def open_folder(self):
+        folder = filedialog.askdirectory(title="Open folder of negative scans")
+        if not folder:
+            return
+        paths = sorted(
+            os.path.join(folder, name) for name in os.listdir(folder)
+            if os.path.splitext(name)[1].lower() in processor.IMAGE_EXTENSIONS
+        )
+        if not paths:
+            messagebox.showinfo("No images found",
+                                 "That folder has no supported image files (JPG/PNG/TIFF/BMP/DNG).")
+            return
+        self._load_photo_list(paths)
+
+    def _load_photo_list(self, paths):
+        """Start a new editing session over one or more photos, each with
+        its own independent adjustments (see PhotoItem). Thumbnails are
+        generated up front (fast - they read each file's embedded preview
+        rather than fully decoding it); the actual pixel data for each
+        photo is only decoded the first time it's selected."""
+        self.photos = [PhotoItem(p) for p in paths]
+        self.current_photo_index = -1
+        thumbs = [(item.path, processor.extract_thumbnail(item.path)) for item in self.photos]
+        self.filmstrip.set_photos(thumbs)
+        self._select_photo(0)
+
+    def _select_photo(self, index):
+        if not (0 <= index < len(self.photos)) or index == self.current_photo_index:
             return
 
-        self.image_path = path
-        self.preview_arr = processor.downscale(self.full_arr, PREVIEW_MAX_DIM, self.is_linear)
-        h, w = self.full_arr.shape[:2]
-        ph, pw = self.preview_arr.shape[:2]
-        self.preview_scale = ph / h
+        # the outgoing photo's crop/aspect are plain tuples (reassigned, not
+        # mutated in place) so they need to be written back explicitly;
+        # `params` is a mutable object the PhotoItem already shares a
+        # reference to, so it's implicitly kept in sync as sliders change it -
+        # this copy is just cheap insurance against that assumption changing.
+        if 0 <= self.current_photo_index < len(self.photos):
+            outgoing = self.photos[self.current_photo_index]
+            outgoing.params = self.params
+            outgoing.crop_rect = self.crop_rect
+            outgoing.aspect_ratio = self.aspect_ratio
+
+        item = self.photos[index]
+        first_time = not item.loaded
+        if first_time:
+            try:
+                item.full_arr, item.is_linear = processor.load_negative(item.path)
+            except Exception as exc:
+                messagebox.showerror("Could not open image", f"{os.path.basename(item.path)}: {exc}")
+                return
+            item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
+            item.params.base_color = processor.estimate_base_color(item.preview_arr)
+            exposure, contrast, gamma = processor.auto_levels(
+                item.preview_arr, item.params.base_color, item.is_linear)
+            item.params.exposure, item.params.contrast, item.params.gamma = exposure, contrast, gamma
+            item.auto_baseline = (exposure, contrast, gamma)
+            item.loaded = True
+
+        self.current_photo_index = index
+        self.full_arr = item.full_arr
+        self.preview_arr = item.preview_arr
+        self.is_linear = item.is_linear
+        self.image_path = item.path
+        self.params = item.params
+        self.crop_rect = item.crop_rect
+        self.aspect_ratio = item.aspect_ratio
 
         self.crop_mode = False
-        self.crop_rect = crop.FULL_RECT
-        self.aspect_ratio = None
-        self.aspect_var.set(crop.ASPECT_PRESETS[0][0])
         self.tab_bar.select(TAB_COLORS)
         self._tab_frames[TAB_COLORS].tkraise()
 
-        self.params.base_color = processor.estimate_base_color(self.preview_arr)
+        self._sync_controls_from_state(item)
+        self.filmstrip.set_selected(index)
+
+        h, w = self.full_arr.shape[:2]
+        total = len(self.photos)
+        label = os.path.basename(item.path) if total == 1 else f"{os.path.basename(item.path)} ({index + 1}/{total})"
+        self.status_lbl.configure(text=f"{label}  —  {w}×{h}px")
+
+        self.render_preview()
+
+    def _sync_controls_from_state(self, item):
+        """Push the newly-selected photo's params/crop onto every control,
+        so switching photos in the filmstrip shows that photo's own edits
+        (not whatever the previous photo's sliders happened to show)."""
+        self.exposure_s.set(self.params.exposure)
+        self.contrast_s.set(self.params.contrast)
+        self.gamma_s.set(self.params.gamma)
+        self.saturation_s.set(self.params.saturation)
+        self.shift_r_s.set(self.params.shift_r)
+        self.shift_g_s.set(self.params.shift_g)
+        self.shift_b_s.set(self.params.shift_b)
+        auto_exposure, auto_contrast, auto_gamma = item.auto_baseline
+        self.exposure_s.set_default(auto_exposure)
+        self.contrast_s.set_default(auto_contrast)
+        self.gamma_s.set_default(auto_gamma)
         self._update_base_swatch()
-        self.status_lbl.configure(
-            text=f"{os.path.basename(path)}  —  {w}×{h}px  —  base color estimated, click image to refine")
-        self._apply_auto_levels()
+        label = next((lbl for lbl, ratio in crop.ASPECT_PRESETS if ratio == self.aspect_ratio),
+                     crop.ASPECT_PRESETS[0][0])
+        self.aspect_var.set(label)
 
     def save_image(self):
         if self.full_arr is None:
@@ -297,6 +401,8 @@ class NegConvertApp:
         self.exposure_s.set_default(exposure)
         self.contrast_s.set_default(contrast)
         self.gamma_s.set_default(gamma)
+        if 0 <= self.current_photo_index < len(self.photos):
+            self.photos[self.current_photo_index].auto_baseline = (exposure, contrast, gamma)
         self.render_preview()
 
     def _update_base_swatch(self):

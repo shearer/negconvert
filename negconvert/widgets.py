@@ -1,8 +1,10 @@
 """Custom canvas-drawn widgets for a modern look ttk can't easily give us:
-pill-shaped buttons, a slider with a filled track and round handle, and an
-RGB histogram."""
+pill-shaped buttons, a slider with a filled track and round handle, an RGB
+histogram, and a scrollable thumbnail filmstrip."""
+import os
 import tkinter as tk
 import tkinter.font as tkfont
+from tkinter import ttk
 
 import numpy as np
 
@@ -294,3 +296,89 @@ class TabBar(tk.Frame):
 
     def index(self):
         return self._selected
+
+
+class Filmstrip(tk.Frame):
+    """A horizontally scrollable strip of thumbnails, one per open photo,
+    for batch editing. Click a cell (or the photo isn't loaded yet - a
+    plain filename label stands in until a thumbnail is available) to
+    switch to that photo."""
+
+    THUMB_W = 84
+    THUMB_H = 64
+
+    def __init__(self, parent, on_select, bg=None):
+        bg = bg or theme.PANEL_DARK
+        super().__init__(parent, bg=bg)
+        self._bg = bg
+        self._on_select = on_select
+        self._cells = []
+        self._selected = -1
+
+        self._canvas = tk.Canvas(self, bg=bg, highlightthickness=0, height=self.THUMB_H + 24)
+        hbar = ttk.Scrollbar(self, orient="horizontal", command=self._canvas.xview)
+        self._canvas.configure(xscrollcommand=hbar.set)
+        self._canvas.pack(side="top", fill="x")
+        hbar.pack(side="top", fill="x")
+
+        self._inner = tk.Frame(self._canvas, bg=bg)
+        self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
+        self._inner.bind("<Configure>",
+                          lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<MouseWheel>", self._on_mousewheel)
+
+    def _on_mousewheel(self, event):
+        self._canvas.xview_scroll(int(-event.delta), "units")
+
+    def set_photos(self, paths_and_thumbs):
+        """paths_and_thumbs: list of (path, PIL.Image or None)."""
+        from PIL import Image, ImageTk
+
+        for cell in self._cells:
+            cell["frame"].destroy()
+        self._cells = []
+        self._selected = -1
+
+        for i, (path, pil_img) in enumerate(paths_and_thumbs):
+            frame = tk.Frame(self._inner, bg=self._bg, width=self.THUMB_W + 8, height=self.THUMB_H + 8,
+                              highlightthickness=2, highlightbackground=self._bg)
+            frame.pack_propagate(False)
+            frame.pack(side="left", padx=3, pady=3)
+
+            label = tk.Label(frame, bg=self._bg)
+            label.pack(expand=True, fill="both")
+
+            photo_ref = None
+            if pil_img is not None:
+                thumb = pil_img.copy()
+                thumb.thumbnail((self.THUMB_W, self.THUMB_H), Image.BILINEAR)
+                photo_ref = ImageTk.PhotoImage(thumb)
+                label.configure(image=photo_ref, text="")
+            else:
+                label.configure(text=os.path.basename(path), fg=theme.TEXT_DIM,
+                                 font=("Helvetica", 8), wraplength=self.THUMB_W, justify="center")
+
+            for widget in (frame, label):
+                widget.bind("<Button-1>", lambda _e, idx=i: self._on_select(idx))
+
+            self._cells.append({"frame": frame, "label": label, "photo_ref": photo_ref})
+
+    def update_thumbnail(self, index, pil_img):
+        """Swap in a real thumbnail for a cell that was a placeholder."""
+        from PIL import Image, ImageTk
+
+        if not (0 <= index < len(self._cells)) or pil_img is None:
+            return
+        thumb = pil_img.copy()
+        thumb.thumbnail((self.THUMB_W, self.THUMB_H), Image.BILINEAR)
+        photo_ref = ImageTk.PhotoImage(thumb)
+        cell = self._cells[index]
+        cell["photo_ref"] = photo_ref
+        cell["label"].configure(image=photo_ref, text="")
+
+    def set_selected(self, index):
+        if 0 <= self._selected < len(self._cells):
+            self._cells[self._selected]["frame"].configure(highlightbackground=self._bg)
+        if 0 <= index < len(self._cells):
+            self._cells[index]["frame"].configure(highlightbackground=theme.ACCENT)
+        self._selected = index

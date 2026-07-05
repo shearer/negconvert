@@ -17,6 +17,7 @@ Pipeline:
 4. Map density back to a displayable 0..1 range, apply a gamma trim, and
    re-encode to sRGB for viewing/saving.
 """
+import io
 import os
 from dataclasses import dataclass
 
@@ -25,6 +26,12 @@ from PIL import Image
 
 EPS = 1e-6
 RAW_EXTENSIONS = {".dng"}
+IMAGE_EXTENSIONS = RAW_EXTENSIONS | {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
+
+# LibRaw's "flip" orientation code -> the PIL transpose that corrects for it.
+# The embedded preview thumbnail a DNG carries is *not* pre-rotated the way
+# postprocess()'s main image is, so this has to be applied by hand.
+_FLIP_TO_TRANSPOSE = {0: None, 3: Image.ROTATE_180, 5: Image.ROTATE_90, 6: Image.ROTATE_270}
 
 # Stops of density mapped to the full 0..1 output range. Roughly one stop
 # of optical density (D=1.0, log2(10) ~= 3.32), a reasonable middle ground
@@ -94,6 +101,41 @@ def _load_dng(path: str) -> np.ndarray:
             output_color=rawpy.ColorSpace.raw,
         )
     return rgb16.astype(np.float32) / 65535.0
+
+
+def extract_thumbnail(path: str, max_dim: int = 160):
+    """A small, fast preview for a filmstrip - or None if one can't be made.
+
+    For DNGs this reads the embedded preview LibRaw already carries (a few
+    milliseconds) instead of doing a full raw decode (hundreds of ms), so
+    generating thumbnails for a whole folder synchronously stays fast. It's
+    the raw negative's own preview - still orange-mask-tinted, not run
+    through our conversion - since that requires a per-photo base color
+    this function has no reason to know about.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext in RAW_EXTENSIONS:
+            import rawpy
+            with rawpy.imread(path) as raw:
+                thumb = raw.extract_thumb()
+                flip = raw.sizes.flip
+            if thumb.format == rawpy.ThumbFormat.JPEG:
+                img = Image.open(io.BytesIO(thumb.data))
+            elif thumb.format == rawpy.ThumbFormat.BITMAP:
+                img = Image.fromarray(thumb.data)
+            else:
+                return None
+            op = _FLIP_TO_TRANSPOSE.get(flip)
+            if op is not None:
+                img = img.transpose(op)
+        else:
+            img = Image.open(path)
+        img = img.convert("RGB")
+        img.thumbnail((max_dim, max_dim), Image.BILINEAR)
+        return img
+    except Exception:
+        return None
 
 
 def downscale(arr: np.ndarray, max_dim: int = 900, is_linear: bool = False) -> np.ndarray:
