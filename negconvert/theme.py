@@ -12,6 +12,7 @@ ACCENT_DARK = "#b0b0b0"
 TROUGH = "#4a4a4a"
 CANVAS_BG = "#383838"
 HANDLE = "#f2f2f2"      # bright grey slider handle
+HIST_BG = "#181818"     # near-black histogram background (darktable-style)
 
 
 def apply(root):

@@ -163,21 +163,27 @@ def _hex_to_rgb(hex_color):
 
 
 class Histogram(tk.Canvas):
-    """An RGB histogram of a uint8 HxWx3 image, drawn as filled, overlapping
-    translucent curves (like Lightroom/Photoshop) - true alpha-blended color
-    mixing (R+G -> yellow, all three -> near white, etc.) needs a real
-    compositing pass, which plain Canvas shapes/stipple can't do, so the
-    fill is rendered as an RGB image via numpy/PIL and a crisp stroke is
-    drawn on top of it with ordinary canvas lines.
+    """An RGB histogram of a uint8 HxWx3 image - filled, overlapping curves
+    on a near-black background, in the style of darktable/Lightroom.
+
+    Overlapping channels are combined with a *screen* blend (result = 1 -
+    (1-a)*(1-b)) rather than plain alpha-over: screen blending brightens
+    where colors overlap (red+green -> vivid yellow, all three -> near
+    white), matching how real darkroom histogram tools render channel
+    overlap. Plain alpha-over instead muddies overlaps toward brown, which
+    is what a plain Canvas fill/stipple would give. That compositing needs
+    a real per-pixel blend, so the fill is rendered as an RGB image via
+    numpy/PIL, with a crisp stroke drawn on top using ordinary canvas lines.
     """
 
     BINS = 128
-    CHANNEL_COLORS = ((255, 90, 90), (95, 220, 130), (100, 150, 255))  # R, G, B
-    FILL_ALPHA = 0.5
-    STROKE_COLORS = ("#ff9d9d", "#8bffb0", "#9dc4ff")
+    CHANNEL_COLORS = ((255, 60, 60), (60, 230, 100), (70, 130, 255))  # R, G, B
+    FILL_INTENSITY = 0.85   # channel color strength fed into the screen blend
+    STROKE_COLORS = ((255, 140, 140), (140, 255, 170), (150, 190, 255))
+    AA_WIDTH = 1.25         # soft-edge width, in pixels, at the top of each fill
 
     def __init__(self, parent, height=120, bg=None):
-        bg = bg or theme.CANVAS_BG
+        bg = bg or theme.HIST_BG
         super().__init__(parent, height=height, bg=bg, highlightthickness=0)
         self._bg_rgb = _hex_to_rgb(bg)
         self._image = None
@@ -207,7 +213,7 @@ class Histogram(tk.Canvas):
         plot_w = max(1, w - 2 * pad_x)
         plot_h = max(1, h - 2 * pad_y)
 
-        canvas_arr = np.tile(np.array(self._bg_rgb, dtype=np.float32), (h, w, 1))
+        canvas_norm = np.tile(np.array(self._bg_rgb, dtype=np.float32) / 255.0, (h, w, 1))
         bin_x = np.arange(self.BINS)
         col_x = np.linspace(0, self.BINS - 1, plot_w)
         row_y = np.arange(h, dtype=np.float32)[:, None]  # (h, 1)
@@ -223,14 +229,15 @@ class Histogram(tk.Canvas):
             curves.append(curve)
 
             fill_top_y = pad_y + (1.0 - curve) * plot_h  # (plot_w,), top of fill per column
-            filled = row_y >= fill_top_y[None, :]  # (h, plot_w) bool
-            alpha = filled.astype(np.float32) * self.FILL_ALPHA
+            # soft anti-aliased edge: 0 above the curve, 1 a bit below it
+            coverage = np.clip((row_y - fill_top_y[None, :]) / self.AA_WIDTH + 0.5, 0.0, 1.0)
 
-            region = canvas_arr[:, pad_x:pad_x + plot_w, :]
-            fg = np.array(fill_color, dtype=np.float32)[None, None, :]
-            canvas_arr[:, pad_x:pad_x + plot_w, :] = fg * alpha[..., None] + region * (1.0 - alpha[..., None])
+            fg = np.array(fill_color, dtype=np.float32) / 255.0 * self.FILL_INTENSITY
+            blend = coverage[..., None] * fg[None, None, :]
+            region = canvas_norm[:, pad_x:pad_x + plot_w, :]
+            canvas_norm[:, pad_x:pad_x + plot_w, :] = 1.0 - (1.0 - region) * (1.0 - blend)
 
-        photo_img = Image.fromarray(np.clip(canvas_arr, 0, 255).astype(np.uint8), mode="RGB")
+        photo_img = Image.fromarray(np.clip(canvas_norm * 255.0, 0, 255).astype(np.uint8), mode="RGB")
         self._photo = ImageTk.PhotoImage(photo_img)
         self.create_image(0, 0, anchor="nw", image=self._photo, tags=("hist_fill",))
 
@@ -241,7 +248,8 @@ class Histogram(tk.Canvas):
                 y = pad_y + (1.0 - v) * plot_h
                 points.extend((x, y))
             if len(points) >= 4:
-                self.create_line(*points, fill=stroke, width=1.3, smooth=True, tags=("hist_stroke",))
+                self.create_line(*points, fill="#%02x%02x%02x" % stroke, width=1.3,
+                                  smooth=True, tags=("hist_stroke",))
 
 
 class TabBar(tk.Frame):
