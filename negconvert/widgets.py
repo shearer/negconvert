@@ -157,16 +157,31 @@ class ModernSlider(tk.Frame):
         self._redraw()
 
 
-class Histogram(tk.Canvas):
-    """An RGB histogram of a uint8 HxWx3 image, redrawn on demand."""
+def _hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
-    BINS = 64
-    CHANNEL_COLORS = ("#ff6b6b", "#5fd66b", "#5c9fff")  # R, G, B
+
+class Histogram(tk.Canvas):
+    """An RGB histogram of a uint8 HxWx3 image, drawn as filled, overlapping
+    translucent curves (like Lightroom/Photoshop) - true alpha-blended color
+    mixing (R+G -> yellow, all three -> near white, etc.) needs a real
+    compositing pass, which plain Canvas shapes/stipple can't do, so the
+    fill is rendered as an RGB image via numpy/PIL and a crisp stroke is
+    drawn on top of it with ordinary canvas lines.
+    """
+
+    BINS = 128
+    CHANNEL_COLORS = ((255, 90, 90), (95, 220, 130), (100, 150, 255))  # R, G, B
+    FILL_ALPHA = 0.5
+    STROKE_COLORS = ("#ff9d9d", "#8bffb0", "#9dc4ff")
 
     def __init__(self, parent, height=120, bg=None):
         bg = bg or theme.CANVAS_BG
         super().__init__(parent, height=height, bg=bg, highlightthickness=0)
+        self._bg_rgb = _hex_to_rgb(bg)
         self._image = None
+        self._photo = None
         self.bind("<Configure>", lambda e: self._redraw())
 
     def update_image(self, image_uint8):
@@ -184,24 +199,49 @@ class Histogram(tk.Canvas):
         if w <= 1 or h <= 1 or self._image is None:
             return
 
+        # Lazy import: keeps this module importable even if PIL is ever
+        # unavailable at widget-construction time (only needed for drawing).
+        from PIL import Image, ImageTk
+
         pad_x, pad_y = 4, 6
         plot_w = max(1, w - 2 * pad_x)
         plot_h = max(1, h - 2 * pad_y)
 
-        for ch, color in enumerate(self.CHANNEL_COLORS):
+        canvas_arr = np.tile(np.array(self._bg_rgb, dtype=np.float32), (h, w, 1))
+        bin_x = np.arange(self.BINS)
+        col_x = np.linspace(0, self.BINS - 1, plot_w)
+        row_y = np.arange(h, dtype=np.float32)[:, None]  # (h, 1)
+
+        curves = []
+        for ch, fill_color in enumerate(self.CHANNEL_COLORS):
             channel = self._image[..., ch].ravel()
             counts, _ = np.histogram(channel, bins=self.BINS, range=(0, 255))
             counts = np.log1p(counts.astype(np.float64))
             peak = counts.max()
             norm = counts / peak if peak > 0 else counts
+            curve = np.interp(col_x, bin_x, norm)
+            curves.append(curve)
 
+            fill_top_y = pad_y + (1.0 - curve) * plot_h  # (plot_w,), top of fill per column
+            filled = row_y >= fill_top_y[None, :]  # (h, plot_w) bool
+            alpha = filled.astype(np.float32) * self.FILL_ALPHA
+
+            region = canvas_arr[:, pad_x:pad_x + plot_w, :]
+            fg = np.array(fill_color, dtype=np.float32)[None, None, :]
+            canvas_arr[:, pad_x:pad_x + plot_w, :] = fg * alpha[..., None] + region * (1.0 - alpha[..., None])
+
+        photo_img = Image.fromarray(np.clip(canvas_arr, 0, 255).astype(np.uint8), mode="RGB")
+        self._photo = ImageTk.PhotoImage(photo_img)
+        self.create_image(0, 0, anchor="nw", image=self._photo, tags=("hist_fill",))
+
+        for curve, stroke in zip(curves, self.STROKE_COLORS):
             points = []
-            for i, v in enumerate(norm):
-                x = pad_x + (i / (self.BINS - 1)) * plot_w
+            for i, v in enumerate(curve):
+                x = pad_x + i
                 y = pad_y + (1.0 - v) * plot_h
                 points.extend((x, y))
             if len(points) >= 4:
-                self.create_line(*points, fill=color, width=1.6, smooth=True, tags=("hist",))
+                self.create_line(*points, fill=stroke, width=1.3, smooth=True, tags=("hist_stroke",))
 
 
 class TabBar(tk.Frame):
