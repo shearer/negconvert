@@ -1,18 +1,18 @@
-"""A neutral middle-grey theme, evoking a darkroom / grey card look."""
+"""A dark neutral-grey theme, evoking Photoshop's darkroom-style chrome."""
 from tkinter import ttk
 
-BG = "#7d7d7d"          # middle grey (18% grey card reference)
-PANEL = "#6b6b6b"       # sidebar / toolbar, slightly darker
-PANEL_HOVER = "#787878"  # subtle hover for non-accent buttons
-PANEL_DARK = "#575757"  # status bar, well borders
-TEXT = "#f5f5f5"
-TEXT_DIM = "#cfcfcf"
-ACCENT = "#d6d6d6"      # bright grey accent
-ACCENT_DARK = "#b0b0b0"
-TROUGH = "#4a4a4a"
-CANVAS_BG = "#383838"
-HANDLE = "#f2f2f2"      # bright grey slider handle
-HIST_BG = "#181818"     # near-black histogram background (darktable-style)
+BG = "#3a3a3a"          # app chrome background
+PANEL = "#323232"       # sidebar / toolbar, slightly darker
+PANEL_HOVER = "#454545"  # subtle hover for non-accent buttons
+PANEL_DARK = "#282828"  # status bar, well borders
+TEXT = "#e6e6e6"
+TEXT_DIM = "#a3a3a3"
+ACCENT = "#c9c9c9"      # bright grey accent
+ACCENT_DARK = "#9a9a9a"
+TROUGH = "#232323"
+CANVAS_BG = "#2b2b2b"
+HANDLE = "#f0f0f0"      # bright grey slider handle
+HIST_BG = "#141414"     # near-black histogram background (darktable-style)
 
 
 def apply(root):
