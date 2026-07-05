@@ -31,6 +31,10 @@ RAW_EXTENSIONS = {".dng"}
 # for C-41 stocks; Exposure/Contrast compensate for stock-to-stock variance.
 DENSITY_RANGE = 3.32
 
+# Rec. 709 luma weights, used to hold brightness fixed while scaling
+# chroma for the Saturation control.
+LUMA_WEIGHTS = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+
 
 @dataclass
 class Params:
@@ -41,6 +45,7 @@ class Params:
     gain_r: float = 1.0       # per-channel density (color balance) multiplier
     gain_g: float = 1.0
     gain_b: float = 1.0
+    saturation: float = 1.0   # chroma scale around luma, applied at the end
 
     def reset_adjustments(self):
         self.exposure = 0.0
@@ -49,6 +54,7 @@ class Params:
         self.gain_r = 1.0
         self.gain_g = 1.0
         self.gain_b = 1.0
+        self.saturation = 1.0
 
 
 def load_negative(path: str) -> tuple:
@@ -232,6 +238,10 @@ def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndar
 
     output_linear = np.clip(density / DENSITY_RANGE, 0.0, 1.0)
     output_linear = np.power(output_linear, 1.0 / max(params.gamma, EPS))
+
+    if params.saturation != 1.0:
+        luma = np.dot(output_linear, LUMA_WEIGHTS)[..., None]
+        output_linear = np.clip(luma + (output_linear - luma) * params.saturation, 0.0, 1.0)
 
     output = linear_to_srgb(output_linear)
     return np.clip(output, 0.0, 1.0)

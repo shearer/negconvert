@@ -73,7 +73,7 @@ class NegConvertApp:
         self.canvas.bind("<Configure>", self._center_placeholder)
 
         # sidebar: histogram (upper) + tabbed controls (lower)
-        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=16, width=380)
+        sidebar = ttk.Frame(body, style="Panel.TFrame", padding=12, width=380)
         sidebar.pack(side="right", fill="y")
         sidebar.pack_propagate(False)
 
@@ -102,7 +102,7 @@ class NegConvertApp:
         colors_tab.tkraise()
 
     def _build_colors_tab(self, parent):
-        ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
+        ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
 
         self.exposure_s = ModernSlider(parent, "Exposure (EV)", -4.0, 4.0, self.params.exposure, self.on_slider)
         self.exposure_s.pack(fill="x")
@@ -110,9 +110,11 @@ class NegConvertApp:
         self.contrast_s.pack(fill="x")
         self.gamma_s = ModernSlider(parent, "Gamma", 0.3, 2.5, self.params.gamma, self.on_slider)
         self.gamma_s.pack(fill="x")
+        self.saturation_s = ModernSlider(parent, "Saturation", 0.0, 2.0, self.params.saturation, self.on_slider)
+        self.saturation_s.pack(fill="x")
 
-        ttk.Separator(parent).pack(fill="x", pady=5)
-        ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
+        ttk.Separator(parent).pack(fill="x", pady=4)
+        ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
 
         self.gain_r_s = ModernSlider(parent, "Red", 0.7, 1.4, self.params.gain_r, self.on_slider)
         self.gain_r_s.pack(fill="x")
@@ -121,8 +123,8 @@ class NegConvertApp:
         self.gain_b_s = ModernSlider(parent, "Blue", 0.7, 1.4, self.params.gain_b, self.on_slider)
         self.gain_b_s.pack(fill="x")
 
-        ttk.Separator(parent).pack(fill="x", pady=5)
-        ttk.Label(parent, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 5))
+        ttk.Separator(parent).pack(fill="x", pady=4)
+        ttk.Label(parent, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
         swatch_row = ttk.Frame(parent, style="Panel.TFrame")
         swatch_row.pack(fill="x")
         self.base_swatch = tk.Canvas(swatch_row, width=32, height=32, bg=theme.PANEL,
@@ -131,7 +133,7 @@ class NegConvertApp:
         self.base_lbl = ttk.Label(swatch_row, text="not sampled", style="Panel.TLabel")
         self.base_lbl.pack(side="left", padx=8)
         ttk.Label(parent, text="Click anywhere on the image to sample\nthe orange mask from unexposed film.",
-                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(4, 0))
+                  style="Panel.TLabel", justify="left").pack(anchor="w", pady=(3, 0))
 
         self._update_base_swatch()
 
@@ -247,6 +249,7 @@ class NegConvertApp:
         self.params.exposure = self.exposure_s.get()
         self.params.contrast = self.contrast_s.get()
         self.params.gamma = self.gamma_s.get()
+        self.params.saturation = self.saturation_s.get()
         self.params.gain_r = self.gain_r_s.get()
         self.params.gain_g = self.gain_g_s.get()
         self.params.gain_b = self.gain_b_s.get()
@@ -254,6 +257,7 @@ class NegConvertApp:
 
     def reset_adjustments(self):
         self.params.reset_adjustments()
+        self.saturation_s.set(self.params.saturation)
         self.gain_r_s.set(self.params.gain_r)
         self.gain_g_s.set(self.params.gain_g)
         self.gain_b_s.set(self.params.gain_b)

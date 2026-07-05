@@ -114,8 +114,8 @@ class ModernSlider(tk.Frame):
                                     fg=theme.ACCENT, font=("Helvetica", 11, "bold"), anchor="e")
         self._value_lbl.pack(side="right")
 
-        self.canvas = tk.Canvas(self, height=24, bg=bg, highlightthickness=0, cursor="hand2")
-        self.canvas.pack(fill="x", pady=(2, 6))
+        self.canvas = tk.Canvas(self, height=22, bg=bg, highlightthickness=0, cursor="hand2")
+        self.canvas.pack(fill="x", pady=(2, 5))
         self.canvas.bind("<Configure>", lambda e: self._redraw())
         self.canvas.bind("<Button-1>", self._on_pointer)
         self.canvas.bind("<B1-Motion>", self._on_pointer)
