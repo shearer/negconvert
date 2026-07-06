@@ -19,6 +19,13 @@ TAB_COLORS, TAB_CROP, TAB_EXPORT = 0, 1, 2
 STRAIGHTEN_GUIDE_COUNT = 10
 STRAIGHTEN_GUIDE_COLOR = "#ff3b30"
 
+# Right-click-selectable background behind the displayed image, so you can
+# judge exposure/contrast against different surround tones.
+FRAME_COLORS = [("White", "#ffffff"), ("Middle Grey", "#808080"), ("Dark Grey", "#333333")]
+FRAME_BORDER_COLOR = "#555555"
+DEFAULT_FRAME_COLOR = "#808080"
+IMAGE_FIT_SCALE = 0.9  # image fills this fraction of the available space; the rest is the frame margin
+
 
 class PhotoItem:
     """Per-photo editing state, so each photo opened via 'Open Folder…' can
@@ -53,6 +60,7 @@ class NegConvertApp:
         self.is_linear = False     # True for raw/DNG sources (no sRGB gamma)
         self.tk_image = None
         self.image_path = None
+        self.frame_bg_color = DEFAULT_FRAME_COLOR
 
         self.crop_mode = False
         self.crop_rect = crop.FULL_RECT     # (fx0, fy0, fx1, fy1), fractional of full image
@@ -102,15 +110,19 @@ class NegConvertApp:
         # canvas / preview area
         canvas_frame = ttk.Frame(body)
         canvas_frame.pack(side="left", fill="both", expand=True)
-        self.canvas = tk.Canvas(canvas_frame, bg=theme.CANVAS_BG, highlightthickness=0)
+        self.canvas = tk.Canvas(canvas_frame, bg=self.frame_bg_color, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
         self.canvas.bind("<Button-1>", self.on_canvas_press)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        # Right-click: bind both Button-2 and Button-3 since which one fires
+        # for a "right click" varies by platform/mouse/trackpad setup.
+        self.canvas.bind("<Button-2>", self._show_frame_menu)
+        self.canvas.bind("<Button-3>", self._show_frame_menu)
         self.canvas_placeholder = self.canvas.create_text(
             0, 0, text="Open a negative scan (or a folder of them) to begin\n"
                        "(click the image later to sample the film base color)",
-            fill=theme.TEXT_DIM, font=("Helvetica", 13), justify="center")
+            fill=self._placeholder_text_color(), font=("Helvetica", 13), justify="center")
         self.canvas.bind("<Configure>", self._center_placeholder)
 
         # sidebar: histogram (upper) + tabbed controls (lower)
@@ -231,6 +243,22 @@ class NegConvertApp:
             w = self.canvas.winfo_width()
             h = self.canvas.winfo_height()
             self.canvas.coords(self.canvas_placeholder, w // 2, h // 2)
+
+    def _placeholder_text_color(self):
+        return "#2b2b2b" if self.frame_bg_color == "#ffffff" else theme.TEXT_DIM
+
+    def _show_frame_menu(self, event):
+        menu = tk.Menu(self.root, tearoff=0, bg=theme.PANEL_DARK, fg=theme.TEXT,
+                        activebackground=theme.ACCENT, activeforeground="#2b2b2b")
+        for label, color in FRAME_COLORS:
+            menu.add_command(label=label, command=lambda c=color: self._set_frame_color(c))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _set_frame_color(self, color):
+        self.frame_bg_color = color
+        self.canvas.configure(bg=color)
+        self.canvas.itemconfig(self.canvas_placeholder, fill=self._placeholder_text_color())
+        self.render_preview()
 
     # ---------- image IO ----------
 
@@ -470,6 +498,7 @@ class NegConvertApp:
         ch = max(self.canvas.winfo_height(), 100)
         iw, ih = img.size
         fit = min(cw / iw, ch / ih, 1.0) if (iw > cw or ih > ch) else min(cw / iw, ch / ih)
+        fit *= IMAGE_FIT_SCALE  # shrink so a margin remains on all sides for the frame
         disp_w, disp_h = max(1, int(iw * fit)), max(1, int(ih * fit))
         if (disp_w, disp_h) != (iw, ih):
             img = img.resize((disp_w, disp_h), Image.BILINEAR)
@@ -482,6 +511,8 @@ class NegConvertApp:
         self._img_display_scale = disp_w / iw  # relative to `source` pixels
         self._display_origin_px = origin_px    # source's origin within the working (rotated) array
         self.canvas.create_image(ox, oy, anchor="nw", image=self.tk_image, tags=("bg_image",))
+        self.canvas.create_rectangle(ox, oy, ox + disp_w, oy + disp_h,
+                                      outline=FRAME_BORDER_COLOR, width=2, tags=("bg_image",))
 
         if self.crop_mode:
             self._draw_crop_overlay()
