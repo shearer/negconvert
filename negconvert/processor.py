@@ -159,6 +159,31 @@ def downscale(arr: np.ndarray, max_dim: int = 900, is_linear: bool = False) -> n
     return srgb_to_linear(resized) if is_linear else resized
 
 
+def rotate90(arr: np.ndarray, quarters: int) -> np.ndarray:
+    """Rotate an array by `quarters` * 90 degrees clockwise (0-3). Lossless -
+    no resampling, just a re-indexing of the same pixels."""
+    quarters = quarters % 4
+    if quarters == 0:
+        return arr
+    return np.ascontiguousarray(np.rot90(arr, k=-quarters))
+
+
+def rotate_arbitrary(arr: np.ndarray, angle_degrees: float) -> np.ndarray:
+    """Rotate an array by an arbitrary angle (positive = clockwise), keeping
+    the same canvas size. Corners the rotated content no longer covers are
+    filled with black - callers crop those away (see
+    crop.safe_crop_for_straighten) rather than showing them.
+    """
+    if abs(angle_degrees) < 1e-6:
+        return arr
+    from scipy import ndimage
+    # ndimage.rotate's angle is counterclockwise; negate for our
+    # positive-is-clockwise convention (a "straighten" slider tilting a
+    # horizon level should turn the image clockwise for a positive value).
+    return ndimage.rotate(arr, angle=-angle_degrees, axes=(0, 1), reshape=False,
+                           order=1, mode="constant", cval=0.0).astype(arr.dtype)
+
+
 def estimate_base_color(arr: np.ndarray) -> tuple:
     """Guess the film base color from the brightest (least dense) region.
 

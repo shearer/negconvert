@@ -3,6 +3,7 @@ crop-rect math. Crop rects are stored as (fx0, fy0, fx1, fy1), each in
 0..1, relative to the *full* image - resolution independent, so the same
 rect applies to the preview and the full-res export alike.
 """
+import math
 
 # (label, width/height ratio - None means unconstrained "Free")
 ASPECT_PRESETS = [
@@ -120,3 +121,45 @@ def resize_corner(anchor, drag, ratio, img_w_px, img_h_px):
     new_dx_px *= scale
     new_dy_px *= scale
     return anchor_x + new_dx_px / img_w_px, anchor_y + new_dy_px / img_h_px
+
+
+def rotated_rect_max_area(w, h, angle_radians):
+    """The largest axis-aligned rectangle that fits inside a w x h rectangle
+    after it's been rotated by `angle_radians`, without covering any of the
+    now-empty corners. Standard result for this (search "largest rectangle
+    inscribed in a rotated rectangle"); used to auto-size the crop box after
+    straightening so no black corners show.
+    """
+    if w <= 0 or h <= 0:
+        return 0.0, 0.0
+
+    width_is_longer = w >= h
+    side_long, side_short = (w, h) if width_is_longer else (h, w)
+
+    sin_a, cos_a = abs(math.sin(angle_radians)), abs(math.cos(angle_radians))
+    if side_short <= 2.0 * sin_a * cos_a * side_long or abs(sin_a - cos_a) < 1e-10:
+        # "half-constrained" case: two crop corners touch the long side,
+        # the other two sit on the midline parallel to it.
+        x = 0.5 * side_short
+        if width_is_longer:
+            wr, hr = x / sin_a, x / cos_a
+        else:
+            wr, hr = x / cos_a, x / sin_a
+    else:
+        # fully-constrained case: the crop touches all four sides.
+        cos_2a = cos_a * cos_a - sin_a * sin_a
+        wr = (w * cos_a - h * sin_a) / cos_2a
+        hr = (h * cos_a - w * sin_a) / cos_2a
+    return wr, hr
+
+
+def safe_crop_for_straighten(angle_degrees, img_w_px, img_h_px):
+    """The centered fractional crop rect with no empty corners after
+    rotating a img_w_px x img_h_px image by `angle_degrees`. Returns
+    FULL_RECT for (near) zero angle."""
+    if abs(angle_degrees) < 1e-6:
+        return FULL_RECT
+    wr, hr = rotated_rect_max_area(img_w_px, img_h_px, math.radians(angle_degrees))
+    fw = min(max(wr / img_w_px, MIN_SIZE), 1.0)
+    fh = min(max(hr / img_h_px, MIN_SIZE), 1.0)
+    return (0.5 - fw / 2, 0.5 - fh / 2, 0.5 + fw / 2, 0.5 + fh / 2)

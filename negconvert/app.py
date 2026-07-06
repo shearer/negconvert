@@ -16,6 +16,8 @@ PREVIEW_MAX_DIM = 900
 HANDLE_HIT_RADIUS = 12
 CROP_HANDLE_R = 8
 TAB_COLORS, TAB_CROP, TAB_EXPORT = 0, 1, 2
+STRAIGHTEN_GUIDE_COUNT = 10
+STRAIGHTEN_GUIDE_COLOR = "#ff3b30"
 
 
 class PhotoItem:
@@ -33,6 +35,8 @@ class PhotoItem:
         self.params = processor.Params()
         self.crop_rect = crop.FULL_RECT
         self.aspect_ratio = None
+        self.rotation_90 = 0        # quarter turns clockwise (0-3)
+        self.straighten_angle = 0.0  # fine angle, degrees clockwise
         self.auto_baseline = (0.0, 1.0, 1.0)  # (exposure, contrast, gamma) from this photo's first auto-level
 
 
@@ -53,6 +57,10 @@ class NegConvertApp:
         self.crop_mode = False
         self.crop_rect = crop.FULL_RECT     # (fx0, fy0, fx1, fy1), fractional of full image
         self.aspect_ratio = None            # None = Free
+        self.rotation_90 = 0                 # quarter turns clockwise (0-3)
+        self.straighten_angle = 0.0          # fine angle, degrees clockwise
+        self._working_arr = None            # preview_arr with rotation applied, cached per render
+        self._show_straighten_guides = False  # horizontal reference lines, shown only while dragging
         self._crop_drag = None
         self._crop_handles = {}
         self._crop_rect_canvas = None
@@ -188,6 +196,22 @@ class NegConvertApp:
                                "Switch tabs to preview the cropped result.",
                   style="Panel.TLabel", justify="left").pack(anchor="w", pady=(8, 0))
 
+        ttk.Separator(parent).pack(fill="x", pady=8)
+        ttk.Label(parent, text="Rotate", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
+        rotate_row = ttk.Frame(parent, style="Panel.TFrame")
+        rotate_row.pack(fill="x", pady=(0, 4))
+        PillButton(rotate_row, "Rotate Left", command=self.rotate_left,
+                   bg=theme.PANEL).pack(side="left", padx=(0, 6))
+        PillButton(rotate_row, "Rotate Right", command=self.rotate_right,
+                   bg=theme.PANEL).pack(side="left")
+        self.straighten_s = ModernSlider(parent, "Straighten (°)", -45.0, 45.0,
+                                          self.straighten_angle, self.on_straighten_change, default=0.0)
+        self.straighten_s.pack(fill="x")
+        # add=True: layer on top of ModernSlider's own press/drag bindings
+        # rather than replacing them, so the slider still works normally.
+        self.straighten_s.canvas.bind("<ButtonPress-1>", self._on_straighten_drag_start, add="+")
+        self.straighten_s.canvas.bind("<ButtonRelease-1>", self._on_straighten_drag_end, add="+")
+
     def _build_export_tab(self, parent):
         ttk.Label(parent, text="Export", style="Heading.TLabel").pack(anchor="w", pady=(0, 8))
         ttk.Label(parent, text="Save the converted positive - with any\n"
@@ -264,6 +288,8 @@ class NegConvertApp:
             outgoing.params = self.params
             outgoing.crop_rect = self.crop_rect
             outgoing.aspect_ratio = self.aspect_ratio
+            outgoing.rotation_90 = self.rotation_90
+            outgoing.straighten_angle = self.straighten_angle
 
         item = self.photos[index]
         first_time = not item.loaded
@@ -289,6 +315,8 @@ class NegConvertApp:
         self.params = item.params
         self.crop_rect = item.crop_rect
         self.aspect_ratio = item.aspect_ratio
+        self.rotation_90 = item.rotation_90
+        self.straighten_angle = item.straighten_angle
 
         self.crop_mode = False
         self.tab_bar.select(TAB_COLORS)
@@ -323,6 +351,7 @@ class NegConvertApp:
         label = next((lbl for lbl, ratio in crop.ASPECT_PRESETS if ratio == self.aspect_ratio),
                      crop.ASPECT_PRESETS[0][0])
         self.aspect_var.set(label)
+        self.straighten_s.set(self.straighten_angle)
 
     def save_image(self):
         if self.full_arr is None:
@@ -341,8 +370,9 @@ class NegConvertApp:
         )
         if not path:
             return
-        x0, y0, x1, y1 = crop.crop_pixel_box(self.full_arr.shape, self.crop_rect)
-        cropped = self.full_arr[y0:y1, x0:x1]
+        working_full = self._apply_rotation(self.full_arr)
+        x0, y0, x1, y1 = crop.crop_pixel_box(working_full.shape, self.crop_rect)
+        cropped = working_full[y0:y1, x0:x1]
         try:
             if os.path.splitext(path)[1].lower() == ".dng":
                 full_positive_linear = processor.convert_linear(cropped, self.params, self.is_linear)
@@ -419,13 +449,15 @@ class NegConvertApp:
     def render_preview(self):
         if self.preview_arr is None:
             return
-        ph, pw = self.preview_arr.shape[:2]
+        self._working_arr = self._apply_rotation(self.preview_arr)
+        working = self._working_arr
+        ph, pw = working.shape[:2]
         if self.crop_mode:
-            source = self.preview_arr
+            source = working
             origin_px = (0, 0)
         else:
             x0, y0, x1, y1 = crop.crop_pixel_box((ph, pw), self.crop_rect)
-            source = self.preview_arr[y0:y1, x0:x1]
+            source = working[y0:y1, x0:x1]
             origin_px = (x0, y0)
 
         positive = processor.convert(source, self.params, self.is_linear)
@@ -448,7 +480,7 @@ class NegConvertApp:
         oy = (ch - disp_h) // 2
         self._img_offset = (ox, oy)
         self._img_display_scale = disp_w / iw  # relative to `source` pixels
-        self._display_origin_px = origin_px    # source's origin within preview_arr
+        self._display_origin_px = origin_px    # source's origin within the working (rotated) array
         self.canvas.create_image(ox, oy, anchor="nw", image=self.tk_image, tags=("bg_image",))
 
         if self.crop_mode:
@@ -467,19 +499,74 @@ class NegConvertApp:
 
     def reset_crop(self):
         self.crop_rect = crop.FULL_RECT
+        self.rotation_90 = 0
+        self.straighten_angle = 0.0
+        self.straighten_s.set(0.0)
         self.render_preview()
 
     def on_aspect_change(self, _evt=None):
         ratio = dict(crop.ASPECT_PRESETS)[self.aspect_var.get()]
         self.aspect_ratio = ratio
         if self.full_arr is not None and ratio is not None:
-            H, W = self.full_arr.shape[:2]
+            H, W = self._working_full_dims()
             self.crop_rect = crop.fit_rect_to_ratio(self.crop_rect, ratio, W, H)
         self.render_preview()
 
+    def rotate_left(self):
+        if self.full_arr is None:
+            return
+        self.rotation_90 = (self.rotation_90 - 1) % 4
+        self.crop_rect = crop.FULL_RECT
+        self.render_preview()
+
+    def rotate_right(self):
+        if self.full_arr is None:
+            return
+        self.rotation_90 = (self.rotation_90 + 1) % 4
+        self.crop_rect = crop.FULL_RECT
+        self.render_preview()
+
+    def on_straighten_change(self):
+        self.straighten_angle = self.straighten_s.get()
+        # Only auto-apply the "no empty corners" crop suggestion while the
+        # crop is still untouched (full frame). Once the user has set their
+        # own crop - by dragging, or from an earlier straighten suggestion -
+        # leave it alone; continuously overwriting it on every further
+        # straighten tweak would silently throw away their framing.
+        if self.full_arr is not None and self.crop_rect == crop.FULL_RECT:
+            h, w = self._working_full_dims()
+            self.crop_rect = crop.safe_crop_for_straighten(self.straighten_angle, w, h)
+        self.render_preview()
+
+    def _on_straighten_drag_start(self, _event=None):
+        self._show_straighten_guides = True
+        if self.crop_mode:
+            self._draw_crop_overlay()
+
+    def _on_straighten_drag_end(self, _event=None):
+        self._show_straighten_guides = False
+        if self.crop_mode:
+            self._draw_crop_overlay()
+
+    def _apply_rotation(self, arr):
+        if self.rotation_90:
+            arr = processor.rotate90(arr, self.rotation_90)
+        if self.straighten_angle:
+            arr = processor.rotate_arbitrary(arr, self.straighten_angle)
+        return arr
+
+    def _working_full_dims(self):
+        """Full-resolution (height, width) after the 90°-quarter rotation
+        (which swaps dimensions on odd counts); the fine straighten angle
+        keeps the canvas size fixed, so it doesn't affect this."""
+        h, w = self.full_arr.shape[:2]
+        if self.rotation_90 % 2 == 1:
+            h, w = w, h
+        return h, w
+
     def _draw_crop_overlay(self):
         self.canvas.delete("crop_overlay")
-        ph, pw = self.preview_arr.shape[:2]
+        ph, pw = self._working_arr.shape[:2]
         ox, oy = self._img_offset
         scale = self._img_display_scale
         fx0, fy0, fx1, fy1 = self.crop_rect
@@ -505,6 +592,12 @@ class NegConvertApp:
                                      fill=theme.HANDLE, outline=theme.ACCENT_DARK, width=2,
                                      tags=("crop_overlay",))
         self._crop_rect_canvas = (cx0, cy0, cx1, cy1)
+
+        if self._show_straighten_guides:
+            for i in range(1, STRAIGHTEN_GUIDE_COUNT + 1):
+                gy = iy0 + (i / (STRAIGHTEN_GUIDE_COUNT + 1)) * (iy1 - iy0)
+                self.canvas.create_line(ix0, gy, ix1, gy, fill=STRAIGHTEN_GUIDE_COLOR,
+                                         width=1, dash=(4, 3), tags=("crop_overlay",))
 
     def _hit_test_handle(self, x, y):
         for name, (hx, hy) in self._crop_handles.items():
@@ -536,12 +629,12 @@ class NegConvertApp:
             self._sample_base_from_click(event)
 
     def on_canvas_drag(self, event):
-        if not self.crop_mode or self._crop_drag is None or self.preview_arr is None:
+        if not self.crop_mode or self._crop_drag is None or self._working_arr is None:
             return
-        ph, pw = self.preview_arr.shape[:2]
+        ph, pw = self._working_arr.shape[:2]
         ox, oy = self._img_offset
         scale = self._img_display_scale
-        H, W = self.full_arr.shape[:2]
+        H, W = self._working_full_dims()
 
         fx = min(max((event.x - ox) / scale / pw, 0.0), 1.0)
         fy = min(max((event.y - oy) / scale / ph, 0.0), 1.0)
@@ -584,10 +677,10 @@ class NegConvertApp:
         ox_px, oy_px = self._display_origin_px
         img_x = int(ox_px + (event.x - ox) / scale)
         img_y = int(oy_px + (event.y - oy) / scale)
-        ph, pw = self.preview_arr.shape[:2]
+        ph, pw = self._working_arr.shape[:2]
         if not (0 <= img_x < pw and 0 <= img_y < ph):
             return
-        self.params.base_color = processor.sample_base_color(self.preview_arr, img_x, img_y)
+        self.params.base_color = processor.sample_base_color(self._working_arr, img_x, img_y)
         self._update_base_swatch()
         self._apply_auto_levels()
 
