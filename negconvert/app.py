@@ -505,6 +505,12 @@ class NegConvertApp:
 
         self.tk_image = ImageTk.PhotoImage(img)
         self.canvas.delete("all")
+        # Explicitly repaint the whole canvas rather than relying on the
+        # widget's own background: when the displayed image shrinks between
+        # renders (e.g. after cropping), the just-vacated area sometimes
+        # isn't fully repainted on its own, leaving a faint stale outline
+        # where the previous, larger image used to be.
+        self.canvas.create_rectangle(0, 0, cw, ch, fill=self.frame_bg_color, outline="", tags=("bg_fill",))
         ox = (cw - disp_w) // 2
         oy = (ch - disp_h) // 2
         self._img_offset = (ox, oy)
@@ -607,7 +613,11 @@ class NegConvertApp:
         cx0, cy0 = ox + fx0 * pw * scale, oy + fy0 * ph * scale
         cx1, cy1 = ox + fx1 * pw * scale, oy + fy1 * ph * scale
 
-        dim = dict(fill=theme.CANVAS_BG, stipple="gray50", outline="", tags=("crop_overlay",))
+        # Solid fill, not stippled: a dithered/semi-transparent overlay would
+        # let faint traces of the excluded full-image content (e.g. an
+        # unmasked sliver at the scan's edge) bleed through instead of
+        # being fully hidden by the crop-mode "excluded area" look.
+        dim = dict(fill=self.frame_bg_color, outline="", tags=("crop_overlay",))
         self.canvas.create_rectangle(ix0, iy0, ix1, cy0, **dim)  # top
         self.canvas.create_rectangle(ix0, cy1, ix1, iy1, **dim)  # bottom
         self.canvas.create_rectangle(ix0, cy0, cx0, cy1, **dim)  # left
