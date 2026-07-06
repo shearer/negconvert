@@ -53,6 +53,7 @@ class Params:
     shift_g: float = 0.0
     shift_b: float = 0.0
     saturation: float = 1.0   # chroma scale around luma, applied at the end
+    sharpen: float = 0.0      # unsharp-mask amount, applied last on the final sRGB output
 
     def reset_adjustments(self):
         self.exposure = 0.0
@@ -62,6 +63,7 @@ class Params:
         self.shift_g = 0.0
         self.shift_b = 0.0
         self.saturation = 1.0
+        self.sharpen = 0.0
 
 
 def load_negative(path: str) -> tuple:
@@ -331,10 +333,33 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
     return output_linear
 
 
+def apply_sharpen(arr: np.ndarray, amount: float, radius: float = 1.5, threshold: float = 0.02) -> np.ndarray:
+    """Unsharp mask: boost local (edge/detail) contrast without touching the
+    overall tonal balance - what makes a scan look "washy" is often a lack
+    of this, not wrong exposure/contrast, since those only affect the
+    overall tonal curve, not per-pixel acutance.
+
+    Applied on the final sRGB output rather than the linear-light density
+    result: sharpening is inherently a perceptual/display-space operation,
+    and doing it on scene-linear values produces unnatural-looking halos.
+    `threshold` leaves very low-contrast (flat/noisy) areas alone, so film
+    grain doesn't get emphasized into speckle.
+    """
+    if amount <= 0:
+        return arr
+    from scipy import ndimage
+    blurred = ndimage.gaussian_filter(arr, sigma=(radius, radius, 0))
+    diff = arr - blurred
+    mask = np.abs(diff) >= threshold
+    sharpened = arr + diff * amount * mask
+    return np.clip(sharpened, 0.0, 1.0)
+
+
 def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndarray:
     """Apply the full negative->positive pipeline. Returns float32 0..1 sRGB."""
     output_linear = convert_linear(arr, params, is_linear)
-    return np.clip(linear_to_srgb(output_linear), 0.0, 1.0)
+    output = np.clip(linear_to_srgb(output_linear), 0.0, 1.0)
+    return apply_sharpen(output, params.sharpen)
 
 
 def to_uint8(arr: np.ndarray) -> np.ndarray:

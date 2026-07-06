@@ -15,7 +15,7 @@ from .widgets import Filmstrip, Histogram, ModernSlider, PillButton, TabBar
 PREVIEW_MAX_DIM = 900
 HANDLE_HIT_RADIUS = 12
 CROP_HANDLE_R = 8
-TAB_COLORS, TAB_CROP, TAB_EXPORT = 0, 1, 2
+TAB_ADJUST, TAB_COLORS, TAB_CROP, TAB_EXPORT = 0, 1, 2, 3
 STRAIGHTEN_GUIDE_COUNT = 10
 STRAIGHTEN_GUIDE_COLOR = "#ff3b30"
 
@@ -136,27 +136,27 @@ class NegConvertApp:
 
         ttk.Separator(sidebar).pack(fill="x", pady=(0, 14))
 
-        self.tab_bar = TabBar(sidebar, ["Colors", "Crop", "Export"], on_change=self.on_tab_changed)
+        self.tab_bar = TabBar(sidebar, ["Adjustments", "Colors", "Crop", "Export"], on_change=self.on_tab_changed)
         self.tab_bar.pack(fill="x", pady=(0, 14))
 
         tab_content = ttk.Frame(sidebar, style="Panel.TFrame")
         tab_content.pack(fill="both", expand=True)
 
+        adjust_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
         colors_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
         crop_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
         export_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
-        for frame in (colors_tab, crop_tab, export_tab):
+        for frame in (adjust_tab, colors_tab, crop_tab, export_tab):
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self._tab_frames = [colors_tab, crop_tab, export_tab]
+        self._tab_frames = [adjust_tab, colors_tab, crop_tab, export_tab]
 
+        self._build_adjustments_tab(adjust_tab)
         self._build_colors_tab(colors_tab)
         self._build_crop_tab(crop_tab)
         self._build_export_tab(export_tab)
-        colors_tab.tkraise()
+        adjust_tab.tkraise()
 
-    def _build_colors_tab(self, parent):
-        ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
-
+    def _build_adjustments_tab(self, parent):
         self.exposure_s = ModernSlider(parent, "Exposure (EV)", -8.0, 8.0, self.params.exposure, self.on_slider,
                                         default=0.0)
         self.exposure_s.pack(fill="x")
@@ -169,8 +169,11 @@ class NegConvertApp:
         self.saturation_s = ModernSlider(parent, "Saturation", 0.0, 2.0, self.params.saturation, self.on_slider,
                                           default=1.0)
         self.saturation_s.pack(fill="x")
+        self.sharpen_s = ModernSlider(parent, "Sharpening", 0.0, 2.0, self.params.sharpen, self.on_slider,
+                                       default=0.0)
+        self.sharpen_s.pack(fill="x")
 
-        ttk.Separator(parent).pack(fill="x", pady=4)
+    def _build_colors_tab(self, parent):
         ttk.Label(parent, text="Color Balance", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
 
         self.shift_r_s = ModernSlider(parent, "Red", -0.5, 0.5, self.params.shift_r, self.on_slider, default=0.0)
@@ -347,8 +350,8 @@ class NegConvertApp:
         self.straighten_angle = item.straighten_angle
 
         self.crop_mode = False
-        self.tab_bar.select(TAB_COLORS)
-        self._tab_frames[TAB_COLORS].tkraise()
+        self.tab_bar.select(TAB_ADJUST)
+        self._tab_frames[TAB_ADJUST].tkraise()
 
         self._sync_controls_from_state(item)
         self.filmstrip.set_selected(index)
@@ -368,6 +371,7 @@ class NegConvertApp:
         self.contrast_s.set(self.params.contrast)
         self.gamma_s.set(self.params.gamma)
         self.saturation_s.set(self.params.saturation)
+        self.sharpen_s.set(self.params.sharpen)
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)
         self.shift_b_s.set(self.params.shift_b)
@@ -420,6 +424,7 @@ class NegConvertApp:
         self.params.contrast = self.contrast_s.get()
         self.params.gamma = self.gamma_s.get()
         self.params.saturation = self.saturation_s.get()
+        self.params.sharpen = self.sharpen_s.get()
         self.params.shift_r = self.shift_r_s.get()
         self.params.shift_g = self.shift_g_s.get()
         self.params.shift_b = self.shift_b_s.get()
@@ -428,6 +433,7 @@ class NegConvertApp:
     def reset_adjustments(self):
         self.params.reset_adjustments()
         self.saturation_s.set(self.params.saturation)
+        self.sharpen_s.set(self.params.sharpen)
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)
         self.shift_b_s.set(self.params.shift_b)
