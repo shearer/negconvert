@@ -145,7 +145,7 @@ class NegConvertApp:
     def _build_colors_tab(self, parent):
         ttk.Label(parent, text="Adjustments", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
 
-        self.exposure_s = ModernSlider(parent, "Exposure (EV)", -4.0, 4.0, self.params.exposure, self.on_slider,
+        self.exposure_s = ModernSlider(parent, "Exposure (EV)", -8.0, 8.0, self.params.exposure, self.on_slider,
                                         default=0.0)
         self.exposure_s.pack(fill="x")
         self.contrast_s = ModernSlider(parent, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider,

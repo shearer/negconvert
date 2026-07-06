@@ -260,7 +260,7 @@ def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
     else:
         gamma = float(np.log(normalized_median) / np.log(mid_target))
 
-    exposure = float(np.clip(exposure, -4.0, 4.0))
+    exposure = float(np.clip(exposure, -8.0, 8.0))
     contrast = float(np.clip(contrast, 0.5, 2.5))
     gamma = float(np.clip(gamma, 0.3, 2.5))
     return exposure, contrast, gamma
