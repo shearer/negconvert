@@ -48,6 +48,8 @@ class PhotoItem:
 
 
 class NegConvertApp:
+    EXPORT_FORMATS = [("TIFF", "tif"), ("PNG", "png"), ("JPEG", "jpg"), ("Linear DNG", "dng")]
+
     def __init__(self, root):
         self.root = root
         self.root.title("NegConvert — C-41 Negative Converter")
@@ -110,7 +112,8 @@ class NegConvertApp:
         self.status_lbl = ttk.Label(status, text="No image loaded", style="Status.TLabel")
         self.status_lbl.pack(side="left")
 
-        self.filmstrip = Filmstrip(self.root, on_select=self._select_photo)
+        self.filmstrip = Filmstrip(self.root, on_select=self._select_photo,
+                                    on_mark_change=self._on_marks_changed)
         self.filmstrip.pack(side="bottom", fill="x")
 
         body = ttk.Frame(self.root)
@@ -241,8 +244,34 @@ class NegConvertApp:
         ttk.Label(parent, text="Save the converted positive - with any\n"
                                "crop currently set - as DNG, TIFF, PNG, or JPEG.",
                   style="Panel.TLabel", justify="left").pack(anchor="w", pady=(0, 14))
+
+        ttk.Label(parent, text="Format", style="Panel.TLabel").pack(anchor="w")
+        self.export_format_var = tk.StringVar(value=self.EXPORT_FORMATS[0][0])
+        format_box = ttk.Combobox(parent, textvariable=self.export_format_var, state="readonly",
+                                   values=[label for label, _ in self.EXPORT_FORMATS])
+        format_box.pack(fill="x", pady=(2, 10))
+        format_box.bind("<<ComboboxSelected>>", self._on_export_format_change)
+
+        ttk.Label(parent, text="Color Profile", style="Panel.TLabel").pack(anchor="w")
+        self.export_profile_var = tk.StringVar(value=processor.COLOR_PROFILES[0])
+        self.profile_box = ttk.Combobox(parent, textvariable=self.export_profile_var, state="readonly",
+                                         values=processor.COLOR_PROFILES)
+        self.profile_box.pack(fill="x", pady=(2, 4))
+        self.profile_hint_lbl = ttk.Label(parent, text="", style="Status.TLabel", justify="left")
+        self.profile_hint_lbl.pack(anchor="w", pady=(0, 14))
+
         PillButton(parent, "Save As…", command=self.save_image, accent=True,
                    font=("Helvetica", 11, "bold")).pack(anchor="w")
+
+        ttk.Separator(parent).pack(fill="x", pady=14)
+
+        ttk.Label(parent, text="Batch Export", style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
+        self.marked_lbl = ttk.Label(
+            parent, text="Ctrl+click photos in the filmstrip\nto select several for batch export.",
+            style="Panel.TLabel", justify="left")
+        self.marked_lbl.pack(anchor="w", pady=(0, 8))
+        PillButton(parent, "Export Selected…", command=self.export_selected,
+                   bg=theme.PANEL).pack(anchor="w")
 
     def _bind_shortcuts(self):
         self.root.bind("<Command-o>", lambda e: self.open_image())
@@ -332,20 +361,8 @@ class NegConvertApp:
             outgoing.straighten_angle = self.straighten_angle
 
         item = self.photos[index]
-        first_time = not item.loaded
-        if first_time:
-            try:
-                item.full_arr, item.is_linear = processor.load_negative(item.path)
-            except Exception as exc:
-                messagebox.showerror("Could not open image", f"{os.path.basename(item.path)}: {exc}")
-                return
-            item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
-            item.params.base_color = processor.estimate_base_color(item.preview_arr)
-            exposure, contrast, gamma = processor.auto_levels(
-                item.preview_arr, item.params.base_color, item.is_linear)
-            item.params.exposure, item.params.contrast, item.params.gamma = exposure, contrast, gamma
-            item.auto_baseline = (exposure, contrast, gamma)
-            item.loaded = True
+        if not self._ensure_photo_loaded(item):
+            return
 
         self.current_photo_index = index
         self.full_arr = item.full_arr
@@ -372,6 +389,27 @@ class NegConvertApp:
 
         self.render_preview()
 
+    def _ensure_photo_loaded(self, item):
+        """Lazily decode a PhotoItem's full-res pixel data and compute its
+        initial auto base-color/levels, the first time it's touched (either
+        by selecting it in the filmstrip or exporting it while marked but
+        never visited). Returns False (after showing an error) on failure."""
+        if item.loaded:
+            return True
+        try:
+            item.full_arr, item.is_linear = processor.load_negative(item.path)
+        except Exception as exc:
+            messagebox.showerror("Could not open image", f"{os.path.basename(item.path)}: {exc}")
+            return False
+        item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
+        item.params.base_color = processor.estimate_base_color(item.preview_arr)
+        exposure, contrast, gamma = processor.auto_levels(
+            item.preview_arr, item.params.base_color, item.is_linear)
+        item.params.exposure, item.params.contrast, item.params.gamma = exposure, contrast, gamma
+        item.auto_baseline = (exposure, contrast, gamma)
+        item.loaded = True
+        return True
+
     def _sync_controls_from_state(self, item):
         """Push the newly-selected photo's params/crop onto every control,
         so switching photos in the filmstrip shows that photo's own edits
@@ -394,37 +432,116 @@ class NegConvertApp:
         self.aspect_var.set(label)
         self.straighten_s.set(self.straighten_angle)
 
+    def _on_export_format_change(self, event=None):
+        ext = dict(self.EXPORT_FORMATS)[self.export_format_var.get()]
+        if ext == "dng":
+            self.profile_box.configure(state="disabled")
+            self.profile_hint_lbl.configure(text="Linear DNG is raw data - no color\nprofile is embedded.")
+        else:
+            self.profile_box.configure(state="readonly")
+            self.profile_hint_lbl.configure(text="")
+
+    def _on_marks_changed(self, marked):
+        n = len(marked)
+        if n == 0:
+            text = "Ctrl+click photos in the filmstrip\nto select several for batch export."
+        elif n == 1:
+            text = "1 photo selected for batch export."
+        else:
+            text = f"{n} photos selected for batch export."
+        self.marked_lbl.configure(text=text)
+
+    def _convert_and_save_one(self, full_arr, is_linear, params, crop_rect,
+                               rotation_90, straighten_angle, out_path, ext, profile_name):
+        working_full = self._apply_rotation_to(full_arr, rotation_90, straighten_angle)
+        x0, y0, x1, y1 = crop.crop_pixel_box(working_full.shape, crop_rect)
+        cropped = working_full[y0:y1, x0:x1]
+        if ext == "dng":
+            full_positive_linear = processor.convert_linear(cropped, params, is_linear)
+            processor.save_linear_dng(out_path, full_positive_linear)
+        else:
+            full_positive = processor.convert(cropped, params, is_linear)
+            uint8_img = processor.to_uint8(full_positive)
+            converted, icc_bytes = processor.convert_to_profile(uint8_img, profile_name)
+            Image.fromarray(converted).save(out_path, icc_profile=icc_bytes)
+
     def save_image(self):
         if self.full_arr is None:
             messagebox.showinfo("Nothing to save", "Open a negative first.")
             return
-        default_name = "converted.tif"
+        ext = dict(self.EXPORT_FORMATS)[self.export_format_var.get()]
+        profile_name = self.export_profile_var.get()
+        default_name = f"converted.{ext}"
         if self.image_path:
             base = os.path.splitext(os.path.basename(self.image_path))[0]
-            default_name = f"{base}_positive.tif"
+            default_name = f"{base}_positive.{ext}"
+        filetypes = {
+            "tif": [("TIFF", "*.tif")],
+            "png": [("PNG", "*.png")],
+            "jpg": [("JPEG", "*.jpg")],
+            "dng": [("Linear DNG (raw-editable)", "*.dng")],
+        }[ext]
         path = filedialog.asksaveasfilename(
             title="Save converted positive",
             initialfile=default_name,
-            defaultextension=".tif",
-            filetypes=[("TIFF", "*.tif"), ("PNG", "*.png"), ("JPEG", "*.jpg"),
-                       ("Linear DNG (raw-editable)", "*.dng")],
+            defaultextension=f".{ext}",
+            filetypes=filetypes,
         )
         if not path:
             return
-        working_full = self._apply_rotation(self.full_arr)
-        x0, y0, x1, y1 = crop.crop_pixel_box(working_full.shape, self.crop_rect)
-        cropped = working_full[y0:y1, x0:x1]
         try:
-            if os.path.splitext(path)[1].lower() == ".dng":
-                full_positive_linear = processor.convert_linear(cropped, self.params, self.is_linear)
-                processor.save_linear_dng(path, full_positive_linear)
-            else:
-                full_positive = processor.convert(cropped, self.params, self.is_linear)
-                Image.fromarray(processor.to_uint8(full_positive)).save(path)
+            self._convert_and_save_one(self.full_arr, self.is_linear, self.params, self.crop_rect,
+                                        self.rotation_90, self.straighten_angle, path, ext, profile_name)
         except Exception as exc:
             messagebox.showerror("Could not save image", str(exc))
             return
         self.status_lbl.configure(text=f"Saved {os.path.basename(path)}")
+
+    def export_selected(self):
+        marked = sorted(self.filmstrip.get_marked())
+        if not marked:
+            messagebox.showinfo("Nothing selected",
+                                 "Ctrl+click two or more photos in the filmstrip first.")
+            return
+        folder = filedialog.askdirectory(title="Choose a folder for the exported photos")
+        if not folder:
+            return
+        ext = dict(self.EXPORT_FORMATS)[self.export_format_var.get()]
+        profile_name = self.export_profile_var.get()
+
+        # the active photo's in-memory params/crop can be ahead of what's
+        # stored on its PhotoItem - that's only written back when switching
+        # away, in _select_photo - so refresh it before reading self.photos.
+        if 0 <= self.current_photo_index < len(self.photos):
+            current = self.photos[self.current_photo_index]
+            current.params = self.params
+            current.crop_rect = self.crop_rect
+            current.aspect_ratio = self.aspect_ratio
+            current.rotation_90 = self.rotation_90
+            current.straighten_angle = self.straighten_angle
+
+        saved, failed = 0, []
+        for index in marked:
+            item = self.photos[index]
+            if not self._ensure_photo_loaded(item):
+                failed.append(os.path.basename(item.path))
+                continue
+            base = os.path.splitext(os.path.basename(item.path))[0]
+            out_path = os.path.join(folder, f"{base}_positive.{ext}")
+            try:
+                self._convert_and_save_one(item.full_arr, item.is_linear, item.params, item.crop_rect,
+                                            item.rotation_90, item.straighten_angle,
+                                            out_path, ext, profile_name)
+                saved += 1
+            except Exception as exc:
+                failed.append(f"{os.path.basename(item.path)} ({exc})")
+
+        if failed:
+            messagebox.showerror("Some exports failed",
+                                  f"Saved {saved} of {len(marked)}.\n\nFailed:\n" + "\n".join(failed))
+        else:
+            self.status_lbl.configure(
+                text=f"Exported {saved} photo{'s' if saved != 1 else ''} to {os.path.basename(folder)}")
 
     # ---------- processing / rendering ----------
 
@@ -601,10 +718,14 @@ class NegConvertApp:
             self._draw_crop_overlay()
 
     def _apply_rotation(self, arr):
-        if self.rotation_90:
-            arr = processor.rotate90(arr, self.rotation_90)
-        if self.straighten_angle:
-            arr = processor.rotate_arbitrary(arr, self.straighten_angle)
+        return self._apply_rotation_to(arr, self.rotation_90, self.straighten_angle)
+
+    @staticmethod
+    def _apply_rotation_to(arr, rotation_90, straighten_angle):
+        if rotation_90:
+            arr = processor.rotate90(arr, rotation_90)
+        if straighten_angle:
+            arr = processor.rotate_arbitrary(arr, straighten_angle)
         return arr
 
     def _working_full_dims(self):

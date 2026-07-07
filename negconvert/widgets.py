@@ -302,18 +302,23 @@ class Filmstrip(tk.Frame):
     """A horizontally scrollable strip of thumbnails, one per open photo,
     for batch editing. Click a cell (or the photo isn't loaded yet - a
     plain filename label stands in until a thumbnail is available) to
-    switch to that photo."""
+    switch to that photo. Ctrl+click toggles a cell in/out of a separate
+    multi-selection (for batch export), shown with a different-colored
+    border than the single "currently active" photo."""
 
     THUMB_W = 84
     THUMB_H = 64
+    MARK_COLOR = "#5c9fff"
 
-    def __init__(self, parent, on_select, bg=None):
+    def __init__(self, parent, on_select, on_mark_change=None, bg=None):
         bg = bg or theme.PANEL_DARK
         super().__init__(parent, bg=bg)
         self._bg = bg
         self._on_select = on_select
+        self._on_mark_change = on_mark_change
         self._cells = []
         self._selected = -1
+        self._marked = set()
 
         self._canvas = tk.Canvas(self, bg=bg, highlightthickness=0, height=self.THUMB_H + 24)
         hbar = ttk.Scrollbar(self, orient="horizontal", command=self._canvas.xview)
@@ -338,6 +343,7 @@ class Filmstrip(tk.Frame):
             cell["frame"].destroy()
         self._cells = []
         self._selected = -1
+        self._marked = set()
 
         for i, (path, pil_img) in enumerate(paths_and_thumbs):
             frame = tk.Frame(self._inner, bg=self._bg, width=self.THUMB_W + 8, height=self.THUMB_H + 8,
@@ -359,7 +365,7 @@ class Filmstrip(tk.Frame):
                                  font=("Helvetica", 8), wraplength=self.THUMB_W, justify="center")
 
             for widget in (frame, label):
-                widget.bind("<Button-1>", lambda _e, idx=i: self._on_select(idx))
+                widget.bind("<Button-1>", lambda e, idx=i: self._on_click(idx, e))
 
             self._cells.append({"frame": frame, "label": label, "photo_ref": photo_ref})
 
@@ -376,9 +382,48 @@ class Filmstrip(tk.Frame):
         cell["photo_ref"] = photo_ref
         cell["label"].configure(image=photo_ref, text="")
 
+    def _on_click(self, index, event):
+        # Control mask is bit 0x0004 on every platform Tk runs on.
+        if event.state & 0x0004:
+            self.toggle_mark(index)
+        else:
+            self._on_select(index)
+
+    def toggle_mark(self, index):
+        if index in self._marked:
+            self._marked.discard(index)
+        else:
+            self._marked.add(index)
+        self._redraw_highlight(index)
+        if self._on_mark_change:
+            self._on_mark_change(set(self._marked))
+
+    def get_marked(self):
+        return set(self._marked)
+
+    def clear_marks(self):
+        old = list(self._marked)
+        self._marked = set()
+        for i in old:
+            self._redraw_highlight(i)
+        if self._on_mark_change:
+            self._on_mark_change(set(self._marked))
+
+    def _redraw_highlight(self, index):
+        if not (0 <= index < len(self._cells)):
+            return
+        if index == self._selected:
+            color = theme.ACCENT
+        elif index in self._marked:
+            color = self.MARK_COLOR
+        else:
+            color = self._bg
+        self._cells[index]["frame"].configure(highlightbackground=color)
+
     def set_selected(self, index):
-        if 0 <= self._selected < len(self._cells):
-            self._cells[self._selected]["frame"].configure(highlightbackground=self._bg)
-        if 0 <= index < len(self._cells):
-            self._cells[index]["frame"].configure(highlightbackground=theme.ACCENT)
+        previous = self._selected
         self._selected = index
+        if 0 <= previous < len(self._cells):
+            self._redraw_highlight(previous)
+        if 0 <= index < len(self._cells):
+            self._redraw_highlight(index)
