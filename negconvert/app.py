@@ -840,7 +840,9 @@ class NegConvertApp:
                 self._crop_drag = None
         elif self.pipette_active:
             self._sample_base_from_click(event)
-            self._set_pipette_active(False)  # one-shot, like a real eyedropper
+            # stays armed - switching tabs away from Colors, or clicking the
+            # pipette button again, is what disarms it, so several spots can
+            # be sampled in a row without re-arming each time.
         # else: a plain click on the image does nothing.
 
     def on_canvas_double_click(self, event):

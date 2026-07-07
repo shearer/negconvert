@@ -99,9 +99,9 @@ class PipetteButton(tk.Canvas):
     canvas primitives rather than an emoji glyph, which isn't guaranteed to
     render as a recognizable pipette across platforms/fonts).
 
-    Click to arm it (highlighted); the next click elsewhere - e.g. on the
-    image canvas - is expected to consume the pick and call `set_active(False)`
-    to disarm it again, like a one-shot eyedropper tool in Photoshop/Lightroom.
+    Click to arm it (highlighted); it then stays armed across any number of
+    picks on the image canvas, until it's clicked again or the caller
+    disarms it via `set_active(False)` (e.g. on leaving the relevant tab).
     """
 
     SIZE = 30
