@@ -76,7 +76,9 @@ class NegConvertApp:
         self._crop_handles = {}
         self._crop_rect_canvas = None
 
-        self.zoom_100 = False        # False = fit to window, True = 1 preview-pixel per screen-pixel
+        self.zoom_100 = False           # False = fit to window, True = 1 full-res pixel per screen-pixel
+        self._zoom_center = (0.5, 0.5)  # fractional (x, y) within the crop, set by double-click
+        self._sample_arr = None         # whichever array is currently on screen; see _sample_base_from_click
         self.pipette_active = False  # armed by the Film Base pipette button; makes the next canvas
                                       # click sample the base color instead of doing nothing
 
@@ -636,6 +638,16 @@ class NegConvertApp:
     def render_preview(self):
         if self.preview_arr is None:
             return
+        if self.zoom_100 and not self.crop_mode and self.full_arr is not None:
+            self._render_preview_zoomed()
+        else:
+            self._render_preview_fit()
+
+    def _render_preview_fit(self):
+        """Default view: the whole (cropped) image resized to fit the
+        canvas - using the downscaled interactive preview, not the full-res
+        original, since re-converting the full negative on every slider
+        tweak would be far too slow."""
         self._working_arr = self._apply_rotation(self.preview_arr)
         working = self._working_arr
         ph, pw = working.shape[:2]
@@ -656,18 +668,61 @@ class NegConvertApp:
         cw = max(self.canvas.winfo_width(), 100)
         ch = max(self.canvas.winfo_height(), 100)
         iw, ih = img.size
-        if self.zoom_100:
-            # 1 preview-array pixel per screen pixel - "preview" resolution
-            # (already downscaled to PREVIEW_MAX_DIM), not the full-res raw,
-            # since that's the resolution the whole interactive view works
-            # in; a full-res 100% view would need panning this doesn't do.
-            fit = 1.0
-        else:
-            fit = min(cw / iw, ch / ih, 1.0) if (iw > cw or ih > ch) else min(cw / iw, ch / ih)
-            fit *= IMAGE_FIT_SCALE  # shrink so a margin remains on all sides for the frame
+        fit = min(cw / iw, ch / ih, 1.0) if (iw > cw or ih > ch) else min(cw / iw, ch / ih)
+        fit *= IMAGE_FIT_SCALE  # shrink so a margin remains on all sides for the frame
         disp_w, disp_h = max(1, int(iw * fit)), max(1, int(ih * fit))
         if (disp_w, disp_h) != (iw, ih):
             img = img.resize((disp_w, disp_h), Image.BILINEAR)
+
+        self._sample_arr = working
+        self._place_rendered_image(img, disp_w / iw, origin_px)
+
+        if self.crop_mode:
+            self._draw_crop_overlay()
+
+    def _render_preview_zoomed(self):
+        """100% view: a canvas-sized window cropped straight out of the
+        *full-resolution* negative (not the downscaled preview), centered on
+        wherever was last double-clicked, and displayed with no resampling -
+        one source pixel per screen pixel. This is what actually makes it a
+        "zoom in" from the fit view rather than just a resize: the fit view
+        can end up upscaling a small preview to fill the canvas, so showing
+        the preview at its own native size can be *smaller*, not bigger,
+        which is the wrong direction for a "zoom to 100%" action."""
+        working_full = self._apply_rotation(self.full_arr)
+        H, W = working_full.shape[:2]
+        x0, y0, x1, y1 = crop.crop_pixel_box((H, W), self.crop_rect)
+        cropped_full = working_full[y0:y1, x0:x1]
+        full_h, full_w = cropped_full.shape[:2]
+
+        self.canvas.update_idletasks()
+        cw = max(self.canvas.winfo_width(), 100)
+        ch = max(self.canvas.winfo_height(), 100)
+        win_w, win_h = min(cw, full_w), min(ch, full_h)
+
+        cx = int(self._zoom_center[0] * full_w)
+        cy = int(self._zoom_center[1] * full_h)
+        wx0 = int(np.clip(cx - win_w // 2, 0, max(0, full_w - win_w)))
+        wy0 = int(np.clip(cy - win_h // 2, 0, max(0, full_h - win_h)))
+        window = cropped_full[wy0:wy0 + win_h, wx0:wx0 + win_w]
+
+        positive = processor.convert(window, self.params, self.is_linear)
+        positive_uint8 = processor.to_uint8(positive)
+        img = Image.fromarray(positive_uint8)
+        self.histogram.update_image(positive_uint8)
+
+        self._sample_arr = window
+        self._place_rendered_image(img, 1.0, (0, 0))
+
+    def _place_rendered_image(self, img, display_scale, origin_px):
+        """Shared tail of both preview renderers: size the canvas, paint the
+        frame background, and draw the image centered with a border.
+        `display_scale` and `origin_px` describe how screen coordinates map
+        back onto `self._sample_arr` (see `_sample_base_from_click`)."""
+        self.canvas.update_idletasks()
+        cw = max(self.canvas.winfo_width(), 100)
+        ch = max(self.canvas.winfo_height(), 100)
+        disp_w, disp_h = img.size
 
         self.tk_image = ImageTk.PhotoImage(img)
         self.canvas.delete("all")
@@ -680,14 +735,11 @@ class NegConvertApp:
         ox = (cw - disp_w) // 2
         oy = (ch - disp_h) // 2
         self._img_offset = (ox, oy)
-        self._img_display_scale = disp_w / iw  # relative to `source` pixels
-        self._display_origin_px = origin_px    # source's origin within the working (rotated) array
+        self._img_display_scale = display_scale  # relative to `self._sample_arr` pixels
+        self._display_origin_px = origin_px       # `self._sample_arr`'s origin within its source array
         self.canvas.create_image(ox, oy, anchor="nw", image=self.tk_image, tags=("bg_image",))
         self.canvas.create_rectangle(ox, oy, ox + disp_w, oy + disp_h,
                                       outline=FRAME_BORDER_COLOR, width=2, tags=("bg_image",))
-
-        if self.crop_mode:
-            self._draw_crop_overlay()
 
     # ---------- crop tool ----------
 
@@ -846,8 +898,25 @@ class NegConvertApp:
         # else: a plain click on the image does nothing.
 
     def on_canvas_double_click(self, event):
-        if self.full_arr is None:
+        if self.full_arr is None or self.crop_mode:
             return
+        if not self.zoom_100:
+            # Re-center the zoom on wherever was just double-clicked, in
+            # fractional (crop-relative) coordinates - resolution-independent,
+            # so the same fraction lands on the same spot whether it's read
+            # against the downscaled preview (fit view) or the full-res
+            # image (zoomed view).
+            ox, oy = self._img_offset
+            scale = self._img_display_scale
+            ox_px, oy_px = self._display_origin_px
+            img_x = ox_px + (event.x - ox) / scale
+            img_y = oy_px + (event.y - oy) / scale
+            ph, pw = self._working_arr.shape[:2]
+            x0, y0, x1, y1 = crop.crop_pixel_box((ph, pw), self.crop_rect)
+            crop_w, crop_h = max(x1 - x0, 1), max(y1 - y0, 1)
+            fx = float(np.clip((img_x - x0) / crop_w, 0.0, 1.0))
+            fy = float(np.clip((img_y - y0) / crop_h, 0.0, 1.0))
+            self._zoom_center = (fx, fy)
         self.zoom_100 = not self.zoom_100
         self.render_preview()
 
@@ -906,15 +975,17 @@ class NegConvertApp:
         self._crop_drag = None
 
     def _sample_base_from_click(self, event):
+        if self._sample_arr is None:
+            return
         ox, oy = self._img_offset
         scale = self._img_display_scale
         ox_px, oy_px = self._display_origin_px
         img_x = int(ox_px + (event.x - ox) / scale)
         img_y = int(oy_px + (event.y - oy) / scale)
-        ph, pw = self._working_arr.shape[:2]
+        ph, pw = self._sample_arr.shape[:2]
         if not (0 <= img_x < pw and 0 <= img_y < ph):
             return
-        self.params.base_color = processor.sample_base_color(self._working_arr, img_x, img_y)
+        self.params.base_color = processor.sample_base_color(self._sample_arr, img_x, img_y)
         self._update_base_swatch()
         self._apply_auto_levels()
 
