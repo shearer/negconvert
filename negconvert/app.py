@@ -52,6 +52,7 @@ class NegConvertApp:
         self.root = root
         self.root.title("NegConvert — C-41 Negative Converter")
         self.root.geometry("1280x820")
+        self._set_window_icon()
         theme.apply(root)
 
         self.params = processor.Params()
@@ -78,6 +79,14 @@ class NegConvertApp:
 
         self._build_layout()
         self._bind_shortcuts()
+
+    def _set_window_icon(self):
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon_1024.png")
+        try:
+            self._icon_image = tk.PhotoImage(file=icon_path)
+            self.root.iconphoto(True, self._icon_image)
+        except tk.TclError:
+            pass  # packaged .app builds get their icon from NegConvert.spec instead
 
     # ---------- layout ----------
 
