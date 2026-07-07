@@ -94,6 +94,61 @@ class PillButton(tk.Canvas):
             self._command()
 
 
+class PipetteButton(tk.Canvas):
+    """A small toggle button drawn as an eyedropper/pipette icon (drawn with
+    canvas primitives rather than an emoji glyph, which isn't guaranteed to
+    render as a recognizable pipette across platforms/fonts).
+
+    Click to arm it (highlighted); the next click elsewhere - e.g. on the
+    image canvas - is expected to consume the pick and call `set_active(False)`
+    to disarm it again, like a one-shot eyedropper tool in Photoshop/Lightroom.
+    """
+
+    SIZE = 30
+
+    def __init__(self, parent, command=None, bg=theme.PANEL):
+        self._command = command
+        self._active = False
+        self._hover = False
+        super().__init__(parent, width=self.SIZE, height=self.SIZE, bg=bg,
+                          highlightthickness=0, cursor="hand2")
+        self._draw()
+        self.bind("<Enter>", lambda e: self._set_hover(True))
+        self.bind("<Leave>", lambda e: self._set_hover(False))
+        self.bind("<Button-1>", self._on_click)
+
+    def _set_hover(self, hover):
+        self._hover = hover
+        self._draw()
+
+    def is_active(self):
+        return self._active
+
+    def set_active(self, active):
+        self._active = active
+        self._draw()
+
+    def _on_click(self, _event):
+        self._active = not self._active
+        self._draw()
+        if self._command:
+            self._command(self._active)
+
+    def _draw(self):
+        self.delete("all")
+        if self._active:
+            fill = theme.ACCENT
+        elif self._hover:
+            fill = theme.PANEL_HOVER
+        else:
+            fill = theme.PANEL_DARK
+        round_rectangle(self, 1, 1, self.SIZE - 1, self.SIZE - 1, 8, fill=fill, outline="")
+        icon_color = "#2b2b2b" if self._active else theme.TEXT
+        self.create_oval(16, 5, 24, 13, fill=icon_color, outline="")               # bulb
+        self.create_line(18, 11, 8, 21, fill=icon_color, width=3, capstyle="round")  # tube
+        self.create_oval(6, 21, 9.5, 24.5, fill=icon_color, outline="")            # tip drop
+
+
 class ModernSlider(tk.Frame):
     """A labeled slider with a filled rounded track and a round handle."""
 

@@ -10,7 +10,7 @@ from . import crop
 from . import processor
 from . import theme
 from . import widgets
-from .widgets import Filmstrip, Histogram, ModernSlider, PillButton, TabBar
+from .widgets import Filmstrip, Histogram, ModernSlider, PillButton, PipetteButton, TabBar
 
 PREVIEW_MAX_DIM = 900
 HANDLE_HIT_RADIUS = 12
@@ -76,6 +76,10 @@ class NegConvertApp:
         self._crop_handles = {}
         self._crop_rect_canvas = None
 
+        self.zoom_100 = False        # False = fit to window, True = 1 preview-pixel per screen-pixel
+        self.pipette_active = False  # armed by the Film Base pipette button; makes the next canvas
+                                      # click sample the base color instead of doing nothing
+
         self.photos = []              # list of PhotoItem, for batch (Open Folder) editing
         self.current_photo_index = -1
 
@@ -127,6 +131,7 @@ class NegConvertApp:
         self.canvas.bind("<Button-1>", self.on_canvas_press)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        self.canvas.bind("<Double-Button-1>", self.on_canvas_double_click)
         # Right-click: bind both Button-2 and Button-3 since which one fires
         # for a "right click" varies by platform/mouse/trackpad setup.
         self.canvas.bind("<Button-2>", self._show_frame_menu)
@@ -208,12 +213,16 @@ class NegConvertApp:
         ttk.Label(parent, text="Film Base", style="Heading.TLabel").pack(anchor="w", pady=(0, 4))
         swatch_row = ttk.Frame(parent, style="Panel.TFrame")
         swatch_row.pack(fill="x")
+        self.pipette_btn = PipetteButton(swatch_row, command=self._on_pipette_toggle, bg=theme.PANEL)
+        self.pipette_btn.pack(side="left")
         self.base_swatch = tk.Canvas(swatch_row, width=32, height=32, bg=theme.PANEL,
                                       highlightthickness=0)
-        self.base_swatch.pack(side="left")
+        self.base_swatch.pack(side="left", padx=(8, 0))
         self.base_lbl = ttk.Label(swatch_row, text="not sampled", style="Panel.TLabel")
         self.base_lbl.pack(side="left", padx=8)
-        ttk.Label(parent, text="Click anywhere on the image to sample\nthe orange mask from unexposed film.",
+        ttk.Label(parent, text="Click the pipette, then click anywhere on\n"
+                               "the image to sample the orange mask from\n"
+                               "unexposed film.",
                   style="Panel.TLabel", justify="left").pack(anchor="w", pady=(3, 0))
 
         self._update_base_swatch()
@@ -647,8 +656,15 @@ class NegConvertApp:
         cw = max(self.canvas.winfo_width(), 100)
         ch = max(self.canvas.winfo_height(), 100)
         iw, ih = img.size
-        fit = min(cw / iw, ch / ih, 1.0) if (iw > cw or ih > ch) else min(cw / iw, ch / ih)
-        fit *= IMAGE_FIT_SCALE  # shrink so a margin remains on all sides for the frame
+        if self.zoom_100:
+            # 1 preview-array pixel per screen pixel - "preview" resolution
+            # (already downscaled to PREVIEW_MAX_DIM), not the full-res raw,
+            # since that's the resolution the whole interactive view works
+            # in; a full-res 100% view would need panning this doesn't do.
+            fit = 1.0
+        else:
+            fit = min(cw / iw, ch / ih, 1.0) if (iw > cw or ih > ch) else min(cw / iw, ch / ih)
+            fit *= IMAGE_FIT_SCALE  # shrink so a margin remains on all sides for the frame
         disp_w, disp_h = max(1, int(iw * fit)), max(1, int(ih * fit))
         if (disp_w, disp_h) != (iw, ih):
             img = img.resize((disp_w, disp_h), Image.BILINEAR)
@@ -677,6 +693,8 @@ class NegConvertApp:
 
     def on_tab_changed(self, index):
         self._tab_frames[index].tkraise()
+        if index != TAB_COLORS:
+            self._set_pipette_active(False)
         if self.full_arr is None:
             return
         is_crop_tab = index == TAB_CROP
@@ -820,8 +838,27 @@ class NegConvertApp:
                                     "orig_rect": self.crop_rect}
             else:
                 self._crop_drag = None
-        else:
+        elif self.pipette_active:
             self._sample_base_from_click(event)
+            self._set_pipette_active(False)  # one-shot, like a real eyedropper
+        # else: a plain click on the image does nothing.
+
+    def on_canvas_double_click(self, event):
+        if self.full_arr is None:
+            return
+        self.zoom_100 = not self.zoom_100
+        self.render_preview()
+
+    def _on_pipette_toggle(self, active):
+        self.pipette_active = active
+        self.canvas.configure(cursor="crosshair" if active else "")
+
+    def _set_pipette_active(self, active):
+        if self.pipette_active == active:
+            return
+        self.pipette_active = active
+        self.pipette_btn.set_active(active)
+        self.canvas.configure(cursor="crosshair" if active else "")
 
     def on_canvas_drag(self, event):
         if not self.crop_mode or self._crop_drag is None or self._working_arr is None:
