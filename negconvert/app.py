@@ -172,6 +172,15 @@ class NegConvertApp:
         self.exposure_s = ModernSlider(parent, "Exposure (EV)", -8.0, 8.0, self.params.exposure, self.on_slider,
                                         default=0.0)
         self.exposure_s.pack(fill="x")
+        self.density_s = ModernSlider(parent, "Density", -4.0, 4.0, self.params.density, self.on_slider,
+                                       default=0.0)
+        self.density_s.pack(fill="x")
+        self.shadow_density_s = ModernSlider(parent, "Shadow Density", -2.0, 2.0,
+                                              self.params.shadow_density, self.on_slider, default=0.0)
+        self.shadow_density_s.pack(fill="x")
+        self.highlight_density_s = ModernSlider(parent, "Highlight Density", -2.0, 2.0,
+                                                 self.params.highlight_density, self.on_slider, default=0.0)
+        self.highlight_density_s.pack(fill="x")
         self.contrast_s = ModernSlider(parent, "Contrast", 0.5, 2.5, self.params.contrast, self.on_slider,
                                         default=1.0)
         self.contrast_s.pack(fill="x")
@@ -415,6 +424,9 @@ class NegConvertApp:
         so switching photos in the filmstrip shows that photo's own edits
         (not whatever the previous photo's sliders happened to show)."""
         self.exposure_s.set(self.params.exposure)
+        self.density_s.set(self.params.density)
+        self.shadow_density_s.set(self.params.shadow_density)
+        self.highlight_density_s.set(self.params.highlight_density)
         self.contrast_s.set(self.params.contrast)
         self.gamma_s.set(self.params.gamma)
         self.saturation_s.set(self.params.saturation)
@@ -547,6 +559,9 @@ class NegConvertApp:
 
     def on_slider(self):
         self.params.exposure = self.exposure_s.get()
+        self.params.density = self.density_s.get()
+        self.params.shadow_density = self.shadow_density_s.get()
+        self.params.highlight_density = self.highlight_density_s.get()
         self.params.contrast = self.contrast_s.get()
         self.params.gamma = self.gamma_s.get()
         self.params.saturation = self.saturation_s.get()
@@ -558,6 +573,9 @@ class NegConvertApp:
 
     def reset_adjustments(self):
         self.params.reset_adjustments()
+        self.density_s.set(self.params.density)
+        self.shadow_density_s.set(self.params.shadow_density)
+        self.highlight_density_s.set(self.params.highlight_density)
         self.saturation_s.set(self.params.saturation)
         self.sharpen_s.set(self.params.sharpen)
         self.shift_r_s.set(self.params.shift_r)

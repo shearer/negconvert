@@ -61,6 +61,10 @@ class Params:
     exposure: float = 0.0     # stops, shifts the whole density image
     contrast: float = 1.0     # scales density spread around the mid pivot
     gamma: float = 1.0        # display gamma trim, applied after tone-mapping
+    density: float = 0.0          # stops, shifts the whole image *after* contrast (unlike
+                                   # exposure, not scaled by the Contrast slider)
+    shadow_density: float = 0.0   # stops, added only in shadows (weighted by tone position)
+    highlight_density: float = 0.0  # stops, added only in highlights (weighted by tone position)
     shift_r: float = 0.0      # per-channel density (color balance) shift, in stops
     shift_g: float = 0.0
     shift_b: float = 0.0
@@ -71,6 +75,9 @@ class Params:
         self.exposure = 0.0
         self.contrast = 1.0
         self.gamma = 1.0
+        self.density = 0.0
+        self.shadow_density = 0.0
+        self.highlight_density = 0.0
         self.shift_r = 0.0
         self.shift_g = 0.0
         self.shift_b = 0.0
@@ -334,6 +341,27 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
 
     pivot = DENSITY_RANGE / 2.0
     density = (density - pivot) * params.contrast + pivot
+
+    # Master density shift, applied *after* the contrast scale above - unlike
+    # Exposure (shifted in before that scale, so Contrast amplifies or damps
+    # its effect), this moves the whole image by a fixed amount regardless of
+    # the Contrast slider, like adjusting a print's exposure after the
+    # negative's contrast grade is already fixed.
+    density = density + params.density
+
+    # Shadow/Highlight Density: independent stops shifts weighted by each
+    # pixel's own tone position, so they act like a local, one-sided
+    # exposure change - lifting/lowering just the shadows or just the
+    # highlights without touching the other end or the midtones as much.
+    # `normalized` is a 0..1 proxy for output tone (0 = darkest, 1 =
+    # brightest) computed *before* those two adjustments are added, so their
+    # own contribution doesn't feed back into their own weighting.
+    if params.shadow_density != 0.0 or params.highlight_density != 0.0:
+        normalized = np.clip(density / DENSITY_RANGE, 0.0, 1.0)
+        shadow_weight = (1.0 - normalized) ** 2
+        highlight_weight = normalized ** 2
+        density = density + params.shadow_density * shadow_weight
+        density = density + params.highlight_density * highlight_weight
 
     output_linear = np.clip(density / DENSITY_RANGE, 0.0, 1.0)
     output_linear = np.power(output_linear, 1.0 / max(params.gamma, EPS))
