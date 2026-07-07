@@ -197,6 +197,9 @@ class NegConvertApp:
         self.saturation_s = ModernSlider(parent, "Saturation", 0.0, 2.0, self.params.saturation, self.on_slider,
                                           default=1.0)
         self.saturation_s.pack(fill="x")
+        self.denoise_s = ModernSlider(parent, "Denoise", 0.0, 2.0, self.params.denoise, self.on_slider,
+                                       default=0.0)
+        self.denoise_s.pack(fill="x")
         self.sharpen_s = ModernSlider(parent, "Sharpening", 0.0, 2.0, self.params.sharpen, self.on_slider,
                                        default=0.0)
         self.sharpen_s.pack(fill="x")
@@ -441,6 +444,7 @@ class NegConvertApp:
         self.contrast_s.set(self.params.contrast)
         self.gamma_s.set(self.params.gamma)
         self.saturation_s.set(self.params.saturation)
+        self.denoise_s.set(self.params.denoise)
         self.sharpen_s.set(self.params.sharpen)
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)
@@ -576,6 +580,7 @@ class NegConvertApp:
         self.params.contrast = self.contrast_s.get()
         self.params.gamma = self.gamma_s.get()
         self.params.saturation = self.saturation_s.get()
+        self.params.denoise = self.denoise_s.get()
         self.params.sharpen = self.sharpen_s.get()
         self.params.shift_r = self.shift_r_s.get()
         self.params.shift_g = self.shift_g_s.get()
@@ -588,6 +593,7 @@ class NegConvertApp:
         self.shadow_density_s.set(self.params.shadow_density)
         self.highlight_density_s.set(self.params.highlight_density)
         self.saturation_s.set(self.params.saturation)
+        self.denoise_s.set(self.params.denoise)
         self.sharpen_s.set(self.params.sharpen)
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)

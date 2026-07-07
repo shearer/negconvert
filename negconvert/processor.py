@@ -69,6 +69,7 @@ class Params:
     shift_g: float = 0.0
     shift_b: float = 0.0
     saturation: float = 1.0   # chroma scale around luma, applied at the end
+    denoise: float = 0.0      # median-filter grain reduction, applied before Sharpening
     sharpen: float = 0.0      # unsharp-mask amount, applied last on the final sRGB output
 
     def reset_adjustments(self):
@@ -82,6 +83,7 @@ class Params:
         self.shift_g = 0.0
         self.shift_b = 0.0
         self.saturation = 1.0
+        self.denoise = 0.0
         self.sharpen = 0.0
 
 
@@ -373,6 +375,32 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
     return output_linear
 
 
+def apply_denoise(arr: np.ndarray, amount: float) -> np.ndarray:
+    """Reduce grain/noise with a median filter - good at knocking down the
+    speckled, salt-and-pepper look of high-ISO/pushed C-41 grain while still
+    respecting hard edges, unlike a plain blur which would soften everything
+    equally.
+
+    `amount` blends it in over 0..1 (a 3x3 filter), then over 1..2 blends
+    from that into a 5x5 filter - a wider radius for heavier grain than a
+    fixed small filter can fully knock down, without a discontinuous jump
+    where the filter size switches.
+
+    Applied on the final sRGB output, *before* Sharpening: sharpening a
+    still-noisy image re-amplifies the grain, so denoising has to happen
+    first for the two controls to work together rather than fight.
+    """
+    if amount <= 0:
+        return arr
+    from scipy import ndimage
+    med3 = ndimage.median_filter(arr, size=(3, 3, 1))
+    if amount <= 1.0:
+        return arr + (med3 - arr) * amount
+    med5 = ndimage.median_filter(arr, size=(5, 5, 1))
+    extra = min(amount - 1.0, 1.0)
+    return med3 + (med5 - med3) * extra
+
+
 def apply_sharpen(arr: np.ndarray, amount: float, radius: float = 1.5, threshold: float = 0.02) -> np.ndarray:
     """Unsharp mask: boost local (edge/detail) contrast without touching the
     overall tonal balance - what makes a scan look "washy" is often a lack
@@ -399,6 +427,7 @@ def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndar
     """Apply the full negative->positive pipeline. Returns float32 0..1 sRGB."""
     output_linear = convert_linear(arr, params, is_linear)
     output = np.clip(linear_to_srgb(output_linear), 0.0, 1.0)
+    output = apply_denoise(output, params.denoise)
     return apply_sharpen(output, params.sharpen)
 
 
