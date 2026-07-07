@@ -28,6 +28,18 @@ EPS = 1e-6
 RAW_EXTENSIONS = {".dng"}
 IMAGE_EXTENSIONS = RAW_EXTENSIONS | {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 
+# Color profiles offered on export. sRGB is built in to Pillow/LittleCMS;
+# Adobe RGB and ProPhoto RGB need actual ICC profile files, bundled in
+# assets/ rather than relying on whatever happens to be on the OS (Adobe
+# RGB ships with macOS, but ProPhoto RGB doesn't, and neither is guaranteed
+# on other platforms).
+COLOR_PROFILES = ["sRGB", "Adobe RGB", "ProPhoto RGB"]
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+_PROFILE_FILES = {
+    "Adobe RGB": os.path.join(_ASSETS_DIR, "AdobeRGB1998.icc"),
+    "ProPhoto RGB": os.path.join(_ASSETS_DIR, "ProPhotoRGB.icc"),
+}
+
 # LibRaw's "flip" orientation code -> the PIL transpose that corrects for it.
 # The embedded preview thumbnail a DNG carries is *not* pre-rotated the way
 # postprocess()'s main image is, so this has to be applied by hand.
@@ -432,3 +444,35 @@ def save_linear_dng(path: str, linear_rgb: np.ndarray) -> None:
     # blob describing the array shape) - noise a strict DNG parser doesn't
     # expect and has no reason to need.
     tifffile.imwrite(path, data16, photometric="linear_raw", extratags=extratags, metadata=None)
+
+
+def convert_to_profile(rgb_uint8: np.ndarray, profile_name: str):
+    """Convert an sRGB uint8 image (our `convert()` output) to another
+    working color space's primaries and tone curve, for export.
+
+    Returns (converted_uint8_array, icc_profile_bytes). The pixel values
+    genuinely need remapping, not just a profile tag swap: Adobe RGB and
+    ProPhoto RGB have different primaries (a wider gamut) and different
+    tone curves than sRGB, so the same stored numbers mean a different
+    color in each space. LittleCMS (via PIL.ImageCms) does that transform
+    accurately; we just supply the source (sRGB) and destination profiles.
+    `icc_profile_bytes` must be embedded in the saved file so viewers know
+    how to interpret the (now non-sRGB) pixel values.
+    """
+    from PIL import ImageCms
+
+    src_profile = ImageCms.createProfile("sRGB")
+
+    if profile_name == "sRGB" or profile_name not in _PROFILE_FILES:
+        icc_bytes = ImageCms.ImageCmsProfile(src_profile).tobytes()
+        return rgb_uint8, icc_bytes
+
+    dst_profile = ImageCms.getOpenProfile(_PROFILE_FILES[profile_name])
+    img = Image.fromarray(rgb_uint8, mode="RGB")
+    converted = ImageCms.profileToProfile(
+        img, src_profile, dst_profile,
+        renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+        outputMode="RGB",
+    )
+    icc_bytes = dst_profile.tobytes()
+    return np.asarray(converted), icc_bytes
