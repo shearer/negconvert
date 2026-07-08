@@ -167,6 +167,12 @@ class ImageCanvas(QWidget):
         self.right_click.emit(event.globalPos())
 
 
+def _input_label_style():
+    return (f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; "
+            f"font-size: 10px; font-weight: bold; letter-spacing: 0.6px; "
+            f"text-transform: uppercase; padding-top: 4px;")
+
+
 def _separator(parent):
     sep = QFrame(parent)
     sep.setFrameShape(QFrame.Shape.HLine)
@@ -291,7 +297,7 @@ class NegConvertApp(QMainWindow):
         sl.setSpacing(0)
 
         heading = QLabel("Histogram")
-        heading.setStyleSheet(f"color: {theme.TEXT}; font-size: 13px; font-weight: bold; background: {theme.PANEL}; padding-bottom: 8px;")
+        heading.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL}; padding-bottom: 6px;")
         sl.addWidget(heading)
 
         self.histogram = Histogram(sidebar, height=120)
@@ -359,7 +365,7 @@ class NegConvertApp(QMainWindow):
         layout.setSpacing(2)
 
         h = QLabel("Color Balance")
-        h.setStyleSheet(f"color: {theme.TEXT}; font-size: 13px; font-weight: bold; background: {theme.PANEL};")
+        h.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h)
 
         for attr, label, default in [
@@ -377,7 +383,7 @@ class NegConvertApp(QMainWindow):
         layout.addSpacing(4)
 
         h2 = QLabel("Film Base")
-        h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 13px; font-weight: bold; background: {theme.PANEL};")
+        h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h2)
 
         swatch_row = QWidget(parent)
@@ -401,7 +407,7 @@ class NegConvertApp(QMainWindow):
         hint = QLabel("Click the pipette, then click anywhere on\n"
                        "the image to sample the orange mask from\n"
                        "unexposed film.")
-        hint.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px;")
+        hint.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
         layout.addWidget(hint)
         layout.addStretch()
 
@@ -413,9 +419,12 @@ class NegConvertApp(QMainWindow):
         layout.setSpacing(6)
 
         h = QLabel("Crop")
-        h.setStyleSheet(f"color: {theme.TEXT}; font-size: 13px; font-weight: bold; background: {theme.PANEL};")
+        h.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h)
 
+        lbl_aspect = QLabel("Aspect Ratio")
+        lbl_aspect.setStyleSheet(_input_label_style())
+        layout.addWidget(lbl_aspect)
         self.aspect_combo = QComboBox(parent)
         for label, _ in crop.ASPECT_PRESETS:
             self.aspect_combo.addItem(label)
@@ -428,13 +437,13 @@ class NegConvertApp(QMainWindow):
         hint = QLabel("While this tab is open, drag the corner\n"
                        "handles or the box itself on the image.\n"
                        "Switch tabs to preview the cropped result.")
-        hint.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px;")
+        hint.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
         layout.addWidget(hint)
 
         layout.addWidget(_separator(parent))
 
         h2 = QLabel("Rotate")
-        h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 13px; font-weight: bold; background: {theme.PANEL};")
+        h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h2)
 
         rotate_row = QWidget(parent)
@@ -461,22 +470,26 @@ class NegConvertApp(QMainWindow):
         layout.setSpacing(6)
 
         h = QLabel("Export")
-        h.setStyleSheet(f"color: {theme.TEXT}; font-size: 13px; font-weight: bold; background: {theme.PANEL};")
+        h.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h)
 
         desc = QLabel("Save the converted positive - with any\n"
                        "crop currently set - as DNG, TIFF, PNG, or JPEG.")
-        desc.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px;")
+        desc.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
         layout.addWidget(desc)
 
-        layout.addWidget(QLabel("Format"))
+        lbl_format = QLabel("Format")
+        lbl_format.setStyleSheet(_input_label_style())
+        layout.addWidget(lbl_format)
         self.format_combo = QComboBox(parent)
         for label, _ in self.EXPORT_FORMATS:
             self.format_combo.addItem(label)
         self.format_combo.currentIndexChanged.connect(lambda _: self._on_export_format_change())
         layout.addWidget(self.format_combo)
 
-        layout.addWidget(QLabel("Color Profile"))
+        lbl_profile = QLabel("Color Profile")
+        lbl_profile.setStyleSheet(_input_label_style())
+        layout.addWidget(lbl_profile)
         self.profile_combo = QComboBox(parent)
         for p in processor.COLOR_PROFILES:
             self.profile_combo.addItem(p)
@@ -493,11 +506,11 @@ class NegConvertApp(QMainWindow):
         layout.addWidget(_separator(parent))
 
         h2 = QLabel("Batch Export")
-        h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 13px; font-weight: bold; background: {theme.PANEL};")
+        h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h2)
 
         self.marked_lbl = QLabel("Ctrl+click photos in the filmstrip\nto select several for batch export.")
-        self.marked_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px;")
+        self.marked_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
         layout.addWidget(self.marked_lbl)
 
         layout.addWidget(PillButton(parent, "Export Selected…", command=self.export_selected, bg=theme.PANEL))
@@ -1108,10 +1121,15 @@ class NegConvertApp(QMainWindow):
 
 
 def main():
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QStyleFactory
+    from PySide6.QtGui import QFont
     import sys
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("NegConvert")
+    app.setStyle(QStyleFactory.create("Fusion"))
+    font = QFont(".AppleSystemUIFont", 13)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    app.setFont(font)
     window = NegConvertApp()
     window.show()
     sys.exit(app.exec())

@@ -40,7 +40,7 @@ class PillButton(QWidget):
         self._bg = bg or theme.PANEL
         self._state = "normal"
 
-        font_family, font_size, bold = "Helvetica", 11, False
+        font_family, font_size, bold = "Helvetica", 12, False
         if font:
             font_family = font[0]
             font_size = font[1]
@@ -173,8 +173,8 @@ class PipetteButton(QWidget):
 
 class _SliderTrack(QWidget):
     """The draggable track portion of ModernSlider."""
-    TRACK_H = 4
-    HANDLE_R = 7
+    TRACK_H = 3
+    HANDLE_R = 8
 
     track_pressed = Signal()
     track_released = Signal()
@@ -187,11 +187,13 @@ class _SliderTrack(QWidget):
         self._default = initial
         self._on_change = on_change
         self._bg_color = bg_color
+        self._hover = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(22)
+        self.setFixedHeight(24)
+        self.setMouseTracking(True)
 
     def _bounds(self):
-        pad = self.HANDLE_R + 2
+        pad = self.HANDLE_R + 3
         return pad, max(pad + 1, self.width() - pad)
 
     def _frac(self):
@@ -207,21 +209,44 @@ class _SliderTrack(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         x0, x1 = self._bounds()
         y = self.height() / 2
-        hx = x0 + self._frac() * (x1 - x0)
+        frac = self._frac()
+        hx = x0 + frac * (x1 - x0)
 
+        # Trough (inactive portion)
         pen = QPen(QColor(theme.TROUGH), self.TRACK_H, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawLine(int(x0), int(y), int(x1), int(y))
 
+        # Filled portion
         if hx > x0:
-            pen = QPen(QColor(theme.ACCENT), self.TRACK_H, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            pen = QPen(QColor(theme.TROUGH_FILLED), self.TRACK_H, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
             painter.drawLine(int(x0), int(y), int(hx), int(y))
 
+        # Handle: white circle with a subtle ring on hover
         r = self.HANDLE_R
-        painter.setPen(QPen(QColor(theme.ACCENT_DARK), 1))
-        painter.setBrush(QBrush(QColor(theme.HANDLE)))
+        if self._hover:
+            painter.setPen(QPen(QColor(theme.ACCENT), 1.5))
+            painter.setBrush(QBrush(QColor(theme.HANDLE)))
+        else:
+            painter.setPen(QPen(QColor(theme.HANDLE_BORDER), 1))
+            painter.setBrush(QBrush(QColor(theme.HANDLE)))
         painter.drawEllipse(int(hx - r), int(y - r), r * 2, r * 2)
+
+    def _update_from_x(self, x):
+        x0, x1 = self._bounds()
+        frac = 0.0 if x1 <= x0 else min(1.0, max(0.0, (x - x0) / (x1 - x0)))
+        self._value = self._frm + frac * (self._to - self._frm)
+        self.update()
+        self._on_change()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
 
     def _update_from_x(self, x):
         x0, x1 = self._bounds()
@@ -266,8 +291,8 @@ class ModernSlider(QWidget):
         self.setStyleSheet(f"background: {self._bg_color};")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(0, 4, 0, 2)
+        layout.setSpacing(1)
 
         header = QWidget(self)
         header.setStyleSheet(f"background: {self._bg_color};")
@@ -275,12 +300,16 @@ class ModernSlider(QWidget):
         hl.setContentsMargins(0, 0, 0, 0)
 
         lbl = QLabel(label, header)
-        lbl.setStyleSheet(f"color: {theme.TEXT}; background: {self._bg_color}; font-size: 11px;")
+        lbl.setStyleSheet(
+            f"color: {theme.TEXT_LABEL}; background: {self._bg_color}; font-size: 11px;"
+        )
         hl.addWidget(lbl)
         hl.addStretch()
 
         self._value_lbl = QLabel(value_fmt.format(initial), header)
-        self._value_lbl.setStyleSheet(f"color: {theme.ACCENT}; background: {self._bg_color}; font-size: 11px;")
+        self._value_lbl.setStyleSheet(
+            f"color: {theme.TEXT}; background: {self._bg_color}; font-size: 11px; font-weight: 500;"
+        )
         hl.addWidget(self._value_lbl)
         layout.addWidget(header)
 
