@@ -1,12 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        ('assets', 'assets'),
+    ],
+    hiddenimports=[
+        'PySide6.QtCore',
+        'PySide6.QtGui',
+        'PySide6.QtWidgets',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -50,8 +55,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'NegConvert',
         'CFBundleDisplayName': 'NegConvert',
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1.0.0',
+        'CFBundleShortVersionString': '1.1.0',
+        'CFBundleVersion': '1.1.0',
         'NSHighResolutionCapable': True,
         'NSHumanReadableCopyright': 'NegConvert',
     },

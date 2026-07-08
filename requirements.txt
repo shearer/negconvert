@@ -1,3 +1,4 @@
+PySide6>=6.6
 Pillow>=9.0
 numpy>=1.20
 rawpy>=0.17  # DNG / scanner RAW support (e.g. Nikon Coolscan 5 ED)
