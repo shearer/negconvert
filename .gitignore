@@ -1,4 +1,4 @@
 build/
 dist/
-.Rproj.user
-.venv/
+__pycache__/
+*.pyc
