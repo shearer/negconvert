@@ -824,6 +824,15 @@ class NegConvertApp(QMainWindow):
     def auto_base(self):
         if self.preview_arr is None:
             return
+        if self.params.mode == "B&W":
+            # Same reason the Film Base section is hidden for B&W in the
+            # Colors tab: a grayscale scan has no per-channel color cast to
+            # correct, and the auto-exposure step below would exactly
+            # cancel out any base-color change anyway - so this would
+            # silently do nothing without an explanation.
+            self.status_lbl.setText(
+                "Auto Base Color has no effect on B&W scans - there's no color cast to correct.")
+            return
         self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
         self._apply_auto_levels()
