@@ -494,15 +494,6 @@ class TabBar(QWidget):
         if self._on_change:
             self._on_change(index)
 
-    def set_active(self, index):
-        """Sync the active button to `index` without firing on_change -
-        for reflecting already-known state (e.g. switching photos), the
-        same silent-sync convention as ModernSlider.set()."""
-        if index != self._selected:
-            self._buttons[self._selected].set_active(False)
-            self._selected = index
-        self._buttons[self._selected].set_active(True)
-
     def index(self):
         return self._selected
 

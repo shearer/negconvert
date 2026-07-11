@@ -374,41 +374,58 @@ class NegConvertApp(QMainWindow):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(2)
 
-        h0 = QLabel("Film Type")
-        h0.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
-        layout.addWidget(h0)
+        lbl_mode = QLabel("Film Type")
+        lbl_mode.setStyleSheet(_input_label_style())
+        layout.addWidget(lbl_mode)
 
-        self.mode_bar = TabBar(parent, processor.FILM_MODES, on_change=self._on_mode_change,
-                                bg=theme.PANEL, active=processor.FILM_MODES.index(self.params.mode))
-        layout.addWidget(self.mode_bar)
+        self.mode_combo = QComboBox(parent)
+        for m in processor.FILM_MODES:
+            self.mode_combo.addItem(m)
+        self.mode_combo.setCurrentIndex(processor.FILM_MODES.index(self.params.mode))
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_change)
+        layout.addWidget(self.mode_combo)
 
         layout.addSpacing(4)
         layout.addWidget(_separator(parent))
         layout.addSpacing(4)
 
+        self.color_balance_section = QWidget(parent)
+        self.color_balance_section.setStyleSheet(f"background: {theme.PANEL};")
+        cb_layout = QVBoxLayout(self.color_balance_section)
+        cb_layout.setContentsMargins(0, 0, 0, 0)
+        cb_layout.setSpacing(2)
+
         h = QLabel("Color Balance")
         h.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
-        layout.addWidget(h)
+        cb_layout.addWidget(h)
 
         for attr, label, default in [
             ("shift_r_s", "Red",   0.0),
             ("shift_g_s", "Green", 0.0),
             ("shift_b_s", "Blue",  0.0),
         ]:
-            s = ModernSlider(parent, label, -0.5, 0.5, 0.0, self.on_slider,
+            s = ModernSlider(self.color_balance_section, label, -0.5, 0.5, 0.0, self.on_slider,
                              bg=theme.PANEL, default=default)
             setattr(self, attr, s)
-            layout.addWidget(s)
+            cb_layout.addWidget(s)
+
+        layout.addWidget(self.color_balance_section)
 
         layout.addSpacing(4)
         layout.addWidget(_separator(parent))
         layout.addSpacing(4)
 
+        self.film_base_section = QWidget(parent)
+        self.film_base_section.setStyleSheet(f"background: {theme.PANEL};")
+        fb_layout = QVBoxLayout(self.film_base_section)
+        fb_layout.setContentsMargins(0, 0, 0, 0)
+        fb_layout.setSpacing(2)
+
         h2 = QLabel("Film Base")
         h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
-        layout.addWidget(h2)
+        fb_layout.addWidget(h2)
 
-        swatch_row = QWidget(parent)
+        swatch_row = QWidget(self.film_base_section)
         swatch_row.setStyleSheet(f"background: {theme.PANEL};")
         sr_layout = QHBoxLayout(swatch_row)
         sr_layout.setContentsMargins(0, 0, 0, 0)
@@ -424,13 +441,16 @@ class NegConvertApp(QMainWindow):
         self.base_lbl.setStyleSheet(f"color: {theme.TEXT}; background: {theme.PANEL}; font-size: 11px;")
         sr_layout.addWidget(self.base_lbl)
         sr_layout.addStretch()
-        layout.addWidget(swatch_row)
+        fb_layout.addWidget(swatch_row)
 
         self.base_hint_lbl = QLabel(_film_base_hint(self.params.mode))
         self.base_hint_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
-        layout.addWidget(self.base_hint_lbl)
+        fb_layout.addWidget(self.base_hint_lbl)
+
+        layout.addWidget(self.film_base_section)
         layout.addStretch()
 
+        self._update_mode_ui(self.params.mode)
         self._update_base_swatch()
 
     def _build_crop_tab(self, parent):
@@ -635,8 +655,10 @@ class NegConvertApp(QMainWindow):
         return True
 
     def _sync_controls_from_state(self, item):
-        self.mode_bar.set_active(processor.FILM_MODES.index(self.params.mode))
-        self.base_hint_lbl.setText(_film_base_hint(self.params.mode))
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(processor.FILM_MODES.index(self.params.mode))
+        self.mode_combo.blockSignals(False)
+        self._update_mode_ui(self.params.mode)
         self.exposure_s.set(self.params.exposure)
         self.density_s.set(self.params.density)
         self.shadow_density_s.set(self.params.shadow_density)
@@ -813,8 +835,23 @@ class NegConvertApp(QMainWindow):
         elif self.preview_arr is not None:
             self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
-        self.base_hint_lbl.setText(_film_base_hint(mode))
+        self._update_mode_ui(mode)
         self._apply_auto_levels()
+
+    def _update_mode_ui(self, mode):
+        # B&W collapses to neutral gray regardless of the Red/Green/Blue
+        # sliders (see processor.convert_linear), so hide them rather than
+        # leave controls that have no visible effect. The film-base sample
+        # is equally moot: a B&W scan has R==G==B everywhere, so resampling
+        # it is just a constant density shift that _apply_auto_levels()
+        # (run right after every sample) exactly cancels back out via its
+        # own exposure term - the pipette would visibly do nothing.
+        show_color = mode != "B&W"
+        self.color_balance_section.setVisible(show_color)
+        self.film_base_section.setVisible(show_color)
+        if not show_color:
+            self._set_pipette_active(False)
+        self.base_hint_lbl.setText(_film_base_hint(mode))
 
     def _apply_auto_levels(self):
         if self.preview_arr is None:
