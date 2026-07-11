@@ -29,6 +29,9 @@ TAB_COLORS, TAB_ADJUST, TAB_CROP, TAB_EXPORT = 0, 1, 2, 3
 STRAIGHTEN_GUIDE_COUNT = 10
 STRAIGHTEN_GUIDE_COLOR = "#ff3b30"
 
+# Double-click cycles through these; None means fit-to-window.
+ZOOM_LEVELS = (None, 0.5, 1.0)
+
 FRAME_COLORS = [("White", "#ffffff"), ("Middle Grey", "#808080"), ("Dark Grey", "#333333")]
 FRAME_BORDER_COLOR = "#555555"
 DEFAULT_FRAME_COLOR = "#808080"
@@ -218,8 +221,10 @@ class NegConvertApp(QMainWindow):
         self._crop_handles = {}
         self._crop_rect_canvas = None
 
-        self.zoom_100 = False
+        self._zoom_index = 0  # index into ZOOM_LEVELS
         self._zoom_center = (0.5, 0.5)
+        self._zoom_window_origin = (0, 0)
+        self._zoom_full_dims = (1, 1)
         self._sample_arr = None
         self._img_offset = (0, 0)
         self._img_display_scale = 1.0
@@ -881,8 +886,9 @@ class NegConvertApp(QMainWindow):
     def render_preview(self):
         if self.preview_arr is None:
             return
-        if self.zoom_100 and not self.crop_mode and self.full_arr is not None:
-            self._render_preview_zoomed()
+        zoom_scale = ZOOM_LEVELS[self._zoom_index]
+        if zoom_scale is not None and not self.crop_mode and self.full_arr is not None:
+            self._render_preview_zoomed(zoom_scale)
         else:
             self._render_preview_fit()
 
@@ -920,7 +926,7 @@ class NegConvertApp(QMainWindow):
         else:
             self.image_canvas.clear_overlay()
 
-    def _render_preview_zoomed(self):
+    def _render_preview_zoomed(self, scale):
         working_full = self._apply_rotation(self.full_arr)
         H, W = working_full.shape[:2]
         x0, y0, x1, y1 = crop.crop_pixel_box((H, W), self.crop_rect)
@@ -929,7 +935,11 @@ class NegConvertApp(QMainWindow):
 
         cw = max(self.image_canvas.width(), 100)
         ch = max(self.image_canvas.height(), 100)
-        win_w, win_h = min(cw, full_w), min(ch, full_h)
+        # Window sized in *image* pixels so that, once resized by `scale`
+        # for display, it fills the canvas - e.g. at 50% we need twice as
+        # many source pixels as the canvas has display pixels.
+        win_w = min(full_w, max(1, int(round(cw / scale))))
+        win_h = min(full_h, max(1, int(round(ch / scale))))
 
         cx = int(self._zoom_center[0] * full_w)
         cy = int(self._zoom_center[1] * full_h)
@@ -942,8 +952,19 @@ class NegConvertApp(QMainWindow):
         img = Image.fromarray(positive_uint8)
         self.histogram.update_image(positive_uint8)
 
+        disp_w = max(1, int(round(win_w * scale)))
+        disp_h = max(1, int(round(win_h * scale)))
+        if (disp_w, disp_h) != (win_w, win_h):
+            img = img.resize((disp_w, disp_h), Image.BILINEAR)
+
         self._sample_arr = window
-        self._place_rendered_image(img, 1.0, (0, 0))
+        # Remember where this window sits within the full crop, so a
+        # double-click while zoomed can be converted back to a crop-relative
+        # fraction (on_canvas_double_click) regardless of which zoom level
+        # is currently showing.
+        self._zoom_window_origin = (wx0, wy0)
+        self._zoom_full_dims = (full_w, full_h)
+        self._place_rendered_image(img, scale, (0, 0))
         self.image_canvas.clear_overlay()
 
     def _place_rendered_image(self, img_pil, display_scale, origin_px):
@@ -1110,19 +1131,33 @@ class NegConvertApp(QMainWindow):
     def on_canvas_double_click(self, x, y):
         if self.full_arr is None or self.crop_mode:
             return
-        if not self.zoom_100:
-            ox, oy = self._img_offset
-            scale = self._img_display_scale
-            ox_px, oy_px = self._display_origin_px
-            img_x = ox_px + (x - ox) / scale
-            img_y = oy_px + (y - oy) / scale
+        ox, oy = self._img_offset
+        scale = self._img_display_scale
+        ox_px, oy_px = self._display_origin_px
+        img_x = ox_px + (x - ox) / scale
+        img_y = oy_px + (y - oy) / scale
+
+        if ZOOM_LEVELS[self._zoom_index] is None:
+            # Currently fit-to-window: img_x/img_y are preview-resolution
+            # coordinates within the crop rect - normalize directly.
             ph, pw = self._working_arr.shape[:2]
             x0, y0, x1, y1 = crop.crop_pixel_box((ph, pw), self.crop_rect)
             crop_w, crop_h = max(x1 - x0, 1), max(y1 - y0, 1)
             fx = float(np.clip((img_x - x0) / crop_w, 0.0, 1.0))
             fy = float(np.clip((img_y - y0) / crop_h, 0.0, 1.0))
-            self._zoom_center = (fx, fy)
-        self.zoom_100 = not self.zoom_100
+        else:
+            # Currently zoomed (50% or 100%): img_x/img_y are pixel coords
+            # within the displayed window, not the full crop - add the
+            # window's own offset (from the last _render_preview_zoomed
+            # call) before normalizing, so the fraction stays crop-relative
+            # no matter which zoom level we're coming from.
+            wx0, wy0 = self._zoom_window_origin
+            full_w, full_h = self._zoom_full_dims
+            fx = float(np.clip((wx0 + img_x) / max(full_w, 1), 0.0, 1.0))
+            fy = float(np.clip((wy0 + img_y) / max(full_h, 1), 0.0, 1.0))
+
+        self._zoom_center = (fx, fy)
+        self._zoom_index = (self._zoom_index + 1) % len(ZOOM_LEVELS)
         self.render_preview()
 
     def _on_pipette_toggle(self, active):
