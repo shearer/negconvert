@@ -464,12 +464,12 @@ class Histogram(QWidget):
 
 
 class TabBar(QWidget):
-    def __init__(self, parent=None, labels=None, on_change=None, bg=None):
+    def __init__(self, parent=None, labels=None, on_change=None, bg=None, active=0):
         super().__init__(parent)
         self._bg = bg or theme.PANEL
         self._on_change = on_change
         self._buttons = []
-        self._selected = 0
+        self._selected = active
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -483,7 +483,7 @@ class TabBar(QWidget):
         layout.addStretch()
 
         if self._buttons:
-            self._buttons[0].set_active(True)
+            self._buttons[self._selected].set_active(True)
 
     def select(self, index):
         if index == self._selected:
@@ -493,6 +493,15 @@ class TabBar(QWidget):
         self._buttons[index].set_active(True)
         if self._on_change:
             self._on_change(index)
+
+    def set_active(self, index):
+        """Sync the active button to `index` without firing on_change -
+        for reflecting already-known state (e.g. switching photos), the
+        same silent-sync convention as ModernSlider.set()."""
+        if index != self._selected:
+            self._buttons[self._selected].set_active(False)
+            self._selected = index
+        self._buttons[self._selected].set_active(True)
 
     def index(self):
         return self._selected

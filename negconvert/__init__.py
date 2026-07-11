@@ -1,1 +1,1 @@
-"""NegConvert - a small C-41 negative to positive converter."""
+"""NegConvert - a small negative/slide to positive converter (C-41, B&W, E-6)."""

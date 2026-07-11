@@ -180,12 +180,22 @@ def _separator(parent):
     return sep
 
 
+def _film_base_hint(mode):
+    if mode == "E-6":
+        return ("Click the pipette, then click a clear\n"
+                 "(unexposed) edge of the slide to correct\n"
+                 "for any color cast.")
+    return ("Click the pipette, then click anywhere on\n"
+             "the image to sample the orange mask from\n"
+             "unexposed film.")
+
+
 class NegConvertApp(QMainWindow):
     EXPORT_FORMATS = [("TIFF", "tif"), ("PNG", "png"), ("JPEG", "jpg"), ("Linear DNG", "dng")]
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NegConvert — C-41 Negative Converter")
+        self.setWindowTitle("NegConvert — Negative & Slide Converter")
         self.resize(1280, 820)
         self.setStyleSheet(theme.stylesheet())
         self._set_window_icon()
@@ -307,8 +317,8 @@ class NegConvertApp(QMainWindow):
         sl.addWidget(_separator(sidebar))
         sl.addSpacing(10)
 
-        self.tab_bar = TabBar(sidebar, ["Adjustments", "Colors", "Crop", "Export"],
-                              on_change=self.on_tab_changed)
+        self.tab_bar = TabBar(sidebar, ["Colors", "Adjustments", "Crop", "Export"],
+                              on_change=self.on_tab_changed, active=TAB_COLORS)
         sl.addWidget(self.tab_bar)
         sl.addSpacing(10)
 
@@ -330,9 +340,9 @@ class NegConvertApp(QMainWindow):
         self._build_crop_tab(crop_tab)
         self._build_export_tab(export_tab)
 
-        for w in (adjust_tab, colors_tab, crop_tab, export_tab):
+        for w in (colors_tab, adjust_tab, crop_tab, export_tab):
             self._tab_stack.addWidget(w)
-        self._tab_stack.setCurrentIndex(TAB_ADJUST)
+        self._tab_stack.setCurrentIndex(TAB_COLORS)
 
         return sidebar
 
@@ -363,6 +373,18 @@ class NegConvertApp(QMainWindow):
         layout = QVBoxLayout(parent)
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(2)
+
+        h0 = QLabel("Film Type")
+        h0.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
+        layout.addWidget(h0)
+
+        self.mode_bar = TabBar(parent, processor.FILM_MODES, on_change=self._on_mode_change,
+                                bg=theme.PANEL, active=processor.FILM_MODES.index(self.params.mode))
+        layout.addWidget(self.mode_bar)
+
+        layout.addSpacing(4)
+        layout.addWidget(_separator(parent))
+        layout.addSpacing(4)
 
         h = QLabel("Color Balance")
         h.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
@@ -404,11 +426,9 @@ class NegConvertApp(QMainWindow):
         sr_layout.addStretch()
         layout.addWidget(swatch_row)
 
-        hint = QLabel("Click the pipette, then click anywhere on\n"
-                       "the image to sample the orange mask from\n"
-                       "unexposed film.")
-        hint.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
-        layout.addWidget(hint)
+        self.base_hint_lbl = QLabel(_film_base_hint(self.params.mode))
+        self.base_hint_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
+        layout.addWidget(self.base_hint_lbl)
         layout.addStretch()
 
         self._update_base_swatch()
@@ -524,7 +544,7 @@ class NegConvertApp(QMainWindow):
 
     def open_image(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open C-41 negative scan", "",
+            self, "Open negative or slide scan", "",
             "All supported (*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.dng);;"
             "Scanner RAW (DNG) (*.dng);;"
             "Images (*.jpg *.jpeg *.png *.tif *.tiff *.bmp);;"
@@ -582,8 +602,8 @@ class NegConvertApp(QMainWindow):
         self.straighten_angle = item.straighten_angle
 
         self.crop_mode = False
-        self.tab_bar.select(TAB_ADJUST)
-        self._tab_stack.setCurrentIndex(TAB_ADJUST)
+        self.tab_bar.select(TAB_COLORS)
+        self._tab_stack.setCurrentIndex(TAB_COLORS)
 
         self._sync_controls_from_state(item)
         self.filmstrip.set_selected(index)
@@ -615,6 +635,8 @@ class NegConvertApp(QMainWindow):
         return True
 
     def _sync_controls_from_state(self, item):
+        self.mode_bar.set_active(processor.FILM_MODES.index(self.params.mode))
+        self.base_hint_lbl.setText(_film_base_hint(self.params.mode))
         self.exposure_s.set(self.params.exposure)
         self.density_s.set(self.params.density)
         self.shadow_density_s.set(self.params.shadow_density)
@@ -779,12 +801,28 @@ class NegConvertApp(QMainWindow):
         self._update_base_swatch()
         self._apply_auto_levels()
 
+    def _on_mode_change(self, index):
+        mode = processor.FILM_MODES[index]
+        if mode == self.params.mode:
+            return
+        self.params.mode = mode
+        if mode == "E-6":
+            # Slides have no orange mask to neutralize - start from a
+            # neutral reference rather than whatever was last sampled.
+            self.params.base_color = (1.0, 1.0, 1.0)
+        elif self.preview_arr is not None:
+            self.params.base_color = processor.estimate_base_color(self.preview_arr)
+        self._update_base_swatch()
+        self.base_hint_lbl.setText(_film_base_hint(mode))
+        self._apply_auto_levels()
+
     def _apply_auto_levels(self):
         if self.preview_arr is None:
             self.render_preview()
             return
         exposure, contrast, gamma = processor.auto_levels(
-            self.preview_arr, self.params.base_color, self.is_linear)
+            self.preview_arr, self.params.base_color, self.is_linear,
+            positive=self.params.mode == "E-6")
         self.params.exposure = exposure
         self.params.contrast = contrast
         self.params.gamma = gamma

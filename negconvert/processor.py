@@ -1,4 +1,4 @@
-"""Core C-41 negative -> positive conversion math.
+"""Core negative/slide -> positive conversion math.
 
 Film density is a linear-light, logarithmic phenomenon: doubling the light
 that hit the film adds a fixed increment of dye density, and density is
@@ -11,11 +11,13 @@ Pipeline:
 1. Linearize the scan (undo sRGB gamma) - unless it's already linear (DNG).
 2. Divide by the (linearized) sampled film-base color to neutralize the
    orange mask, then take -log2 of that ratio to get a density image
-   (0 at the film base, increasing with exposure).
+   (0 at the film base, increasing with exposure). E-6 slides are already
+   a positive image, not a dye-masked negative, so that step flips sign
+   instead (density grows with scan *brightness*, not darkness).
 3. Apply per-channel density gain (color balance), an exposure shift, and
    a contrast scale - all in density/stops space.
 4. Map density back to a displayable 0..1 range, apply a gamma trim, and
-   re-encode to sRGB for viewing/saving.
+   re-encode to sRGB for viewing/saving. B&W collapses to neutral gray here.
 """
 import io
 import os
@@ -34,6 +36,11 @@ IMAGE_EXTENSIONS = RAW_EXTENSIONS | {".jpg", ".jpeg", ".png", ".tif", ".tiff", "
 # RGB ships with macOS, but ProPhoto RGB doesn't, and neither is guaranteed
 # on other platforms).
 COLOR_PROFILES = ["sRGB", "Adobe RGB", "ProPhoto RGB"]
+
+# Film stock types offered on the Colors tab. C-41 (color negative) and B&W
+# negative both need the film-base division + density inversion below; E-6
+# (color slide/reversal) is already a positive, so it skips the inversion.
+FILM_MODES = ["C-41", "B&W", "E-6"]
 _ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 _PROFILE_FILES = {
     "Adobe RGB": os.path.join(_ASSETS_DIR, "AdobeRGB1998.icc"),
@@ -57,6 +64,7 @@ LUMA_WEIGHTS = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 @dataclass
 class Params:
+    mode: str = "C-41"        # one of FILM_MODES
     base_color: tuple = (0.85, 0.55, 0.35)  # typical orange mask guess
     exposure: float = 0.0     # stops, shifts the whole density image
     contrast: float = 1.0     # scales density spread around the mid pivot
@@ -231,7 +239,8 @@ def estimate_base_color(arr: np.ndarray) -> tuple:
 
 def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
                  shadow_pct: float = 0.5, highlight_pct: float = 99.5,
-                 clip_floor: float = 0.01, mid_target: float = 0.214) -> tuple:
+                 clip_floor: float = 0.01, mid_target: float = 0.214,
+                 positive: bool = False) -> tuple:
     """Suggest (exposure, contrast, gamma) that map this image's *own*
     density histogram onto the output range: black point and white point
     from the shadow/highlight percentiles, and a gamma curve that repositions
@@ -258,15 +267,24 @@ def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
     that regardless of how good the base estimate was.
 
     Fully clipped pixels (any channel at or near raw zero - e.g. a blown sky)
-    are excluded from all three statistics first: density is -log2(ratio),
+    are excluded from all three statistics first: density is +-log2(ratio),
     which shoots toward infinity as the raw value hits zero, so even a small
     clipped population can hijack a percentile and distort the whole result.
+
+    `positive` must match the sign `convert_linear()` will use for this
+    image's mode (True for E-6 slides, False for C-41/B&W negatives) - the
+    percentiles below have to be taken in the same density direction the
+    actual conversion applies, or the suggested exposure/contrast/gamma end
+    up fitting the wrong end of the histogram.
     """
     base = np.array(base_color, dtype=np.float32)
     lin = arr if is_linear else srgb_to_linear(arr)
     base_lin = base if is_linear else srgb_to_linear(base)
     ratio = np.clip(lin / (base_lin + EPS), EPS, None)
-    density_luma = (-np.log2(ratio)).mean(axis=-1)
+    if positive:
+        density_luma = (DENSITY_RANGE + np.log2(ratio)).mean(axis=-1)
+    else:
+        density_luma = (-np.log2(ratio)).mean(axis=-1)
 
     unclipped = ratio.min(axis=-1) > clip_floor
     sample = density_luma[unclipped] if np.count_nonzero(unclipped) >= density_luma.size // 20 else density_luma
@@ -324,7 +342,16 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
     base_lin = base if is_linear else srgb_to_linear(base)
 
     ratio = np.clip(lin / (base_lin + EPS), EPS, None)
-    density = -np.log2(ratio)  # ~0 at the film base, grows with exposure
+    # ~0 at the film base, grows with exposure. E-6 slides are already a
+    # positive - bright scan = bright scene - so density has to grow with
+    # scan *brightness* there instead, anchored so the sampled reference
+    # (ratio ~= 1, e.g. a clear/highlight area) lands at DENSITY_RANGE
+    # (full white) rather than at 0 (black), the opposite anchor from a
+    # negative's clear film base.
+    if params.mode == "E-6":
+        density = DENSITY_RANGE + np.log2(ratio)
+    else:
+        density = -np.log2(ratio)
 
     # Color balance is an *additive* per-channel density shift, not a
     # multiplicative gain: density can be negative (e.g. a pixel slightly
@@ -367,6 +394,14 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
 
     output_linear = np.clip(density / DENSITY_RANGE, 0.0, 1.0)
     output_linear = np.power(output_linear, 1.0 / max(params.gamma, EPS))
+
+    if params.mode == "B&W":
+        # Collapse to true neutral gray - not just desaturated - regardless
+        # of the Saturation slider, using the same luma weights it uses.
+        # (The per-channel Red/Green/Blue shifts above still apply before
+        # this, acting like colored filters on a B&W enlarger.)
+        luma = np.dot(output_linear, LUMA_WEIGHTS)
+        output_linear = np.repeat(luma[..., None], 3, axis=-1)
 
     if params.saturation != 1.0:
         luma = np.dot(output_linear, LUMA_WEIGHTS)[..., None]
