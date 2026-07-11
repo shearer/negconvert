@@ -15,7 +15,7 @@ from .widgets import Filmstrip, Histogram, ModernSlider, PillButton, PipetteButt
 PREVIEW_MAX_DIM = 900
 HANDLE_HIT_RADIUS = 12
 CROP_HANDLE_R = 8
-TAB_ADJUST, TAB_COLORS, TAB_CROP, TAB_EXPORT = 0, 1, 2, 3
+TAB_COLORS, TAB_ADJUST, TAB_CROP, TAB_EXPORT = 0, 1, 2, 3
 STRAIGHTEN_GUIDE_COUNT = 10
 STRAIGHTEN_GUIDE_COLOR = "#ff3b30"
 
@@ -155,7 +155,7 @@ class NegConvertApp:
 
         ttk.Separator(sidebar).pack(fill="x", pady=(0, 14))
 
-        self.tab_bar = TabBar(sidebar, ["Adjustments", "Colors", "Crop", "Export"], on_change=self.on_tab_changed)
+        self.tab_bar = TabBar(sidebar, ["Colors", "Adjustments", "Crop", "Export"], on_change=self.on_tab_changed)
         self.tab_bar.pack(fill="x", pady=(0, 14))
 
         tab_content = ttk.Frame(sidebar, style="Panel.TFrame")
@@ -167,7 +167,7 @@ class NegConvertApp:
         export_tab = ttk.Frame(tab_content, style="Panel.TFrame", padding=(6, 4))
         for frame in (adjust_tab, colors_tab, crop_tab, export_tab):
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self._tab_frames = [adjust_tab, colors_tab, crop_tab, export_tab]
+        self._tab_frames = [colors_tab, adjust_tab, crop_tab, export_tab]
 
         self._build_adjustments_tab(adjust_tab)
         self._build_colors_tab(colors_tab)
