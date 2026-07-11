@@ -131,6 +131,12 @@ def _load_dng(path: str) -> np.ndarray:
             output_bps=16,
             output_color=rawpy.ColorSpace.raw,
         )
+    if rgb16.shape[-1] == 1:
+        # B&W scanner DNGs carry a single raw channel (no CFA to debayer),
+        # so postprocess() returns (H, W, 1) instead of (H, W, 3). Replicate
+        # it to RGB so the rest of the pipeline - which assumes 3 channels
+        # throughout - doesn't need a separate code path.
+        rgb16 = np.repeat(rgb16, 3, axis=-1)
     return rgb16.astype(np.float32) / 65535.0
 
 
