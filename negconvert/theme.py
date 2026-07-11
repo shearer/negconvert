@@ -52,7 +52,7 @@ def stylesheet():
         border-radius: 6px;
         padding: 5px 32px 5px 10px;
         min-height: 28px;
-        selection-background-color: {ACCENT};
+        selection-background-color: {PANEL_HOVER};
     }}
     QComboBox:hover {{
         border-color: {INPUT_BORDER_HOVER};
@@ -82,8 +82,8 @@ def stylesheet():
     QComboBox QAbstractItemView {{
         background-color: {INPUT_BG};
         color: {TEXT};
-        selection-background-color: {ACCENT};
-        selection-color: #1a1a1a;
+        selection-background-color: {PANEL_HOVER};
+        selection-color: {TEXT};
         border: 1px solid {INPUT_BORDER};
         border-radius: 6px;
         padding: 3px;
@@ -93,6 +93,10 @@ def stylesheet():
         padding: 5px 10px;
         border-radius: 4px;
         min-height: 24px;
+    }}
+    QComboBox QAbstractItemView::item:hover {{
+        background-color: {PANEL_HOVER};
+        color: {TEXT};
     }}
 
     /* ── Scrollbars ── */
