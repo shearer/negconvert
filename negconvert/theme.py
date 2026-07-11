@@ -1,49 +1,163 @@
-"""A dark neutral-grey theme, evoking Photoshop's darkroom-style chrome."""
-from tkinter import ttk
+"""Dark neutral-grey theme colors and Qt stylesheet."""
 
-BG = "#3a3a3a"          # app chrome background
-PANEL = "#323232"       # sidebar / toolbar, slightly darker
-PANEL_HOVER = "#454545"  # subtle hover for non-accent buttons
-PANEL_DARK = "#282828"  # status bar, well borders
+BG = "#3a3a3a"
+PANEL = "#323232"
+PANEL_HOVER = "#454545"
+PANEL_DARK = "#282828"
+INPUT_BG = "#242424"        # slightly darker than panel for inputs
+INPUT_BORDER = "#484848"    # subtle border around inputs
+INPUT_BORDER_HOVER = "#686868"
 TEXT = "#e6e6e6"
-TEXT_DIM = "#a3a3a3"
-ACCENT = "#c9c9c9"      # bright grey accent
+TEXT_DIM = "#888888"
+TEXT_LABEL = "#b0b0b0"      # dimmer than body text for secondary labels
+ACCENT = "#c9c9c9"
 ACCENT_DARK = "#9a9a9a"
-TROUGH = "#232323"
+TROUGH = "#1e1e1e"
+TROUGH_FILLED = "#a8a8a8"   # filled portion of slider track
 CANVAS_BG = "#2b2b2b"
-HANDLE = "#f0f0f0"      # bright grey slider handle
-HIST_BG = "#141414"     # near-black histogram background (darktable-style)
+HANDLE = "#ffffff"
+HANDLE_BORDER = "#888888"
+HIST_BG = "#141414"
 
 
-def apply(root):
-    root.configure(bg=BG)
+def stylesheet():
+    return f"""
+    QWidget {{
+        background-color: {BG};
+        color: {TEXT};
+        font-family: ".AppleSystemUIFont", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 12px;
+    }}
+    QMainWindow {{
+        background-color: {BG};
+    }}
+    QStatusBar {{
+        background-color: {PANEL_DARK};
+        color: {TEXT_DIM};
+        font-size: 11px;
+        border-top: 1px solid #202020;
+    }}
+    QStatusBar QLabel {{
+        background-color: {PANEL_DARK};
+        color: {TEXT_DIM};
+        font-size: 11px;
+        padding: 3px 8px;
+    }}
 
-    style = ttk.Style(root)
-    style.theme_use("clam")
+    /* ── Dropdowns ── */
+    QComboBox {{
+        background-color: {INPUT_BG};
+        color: {TEXT};
+        border: 1px solid {INPUT_BORDER};
+        border-radius: 6px;
+        padding: 5px 32px 5px 10px;
+        min-height: 28px;
+        selection-background-color: {ACCENT};
+    }}
+    QComboBox:hover {{
+        border-color: {INPUT_BORDER_HOVER};
+    }}
+    QComboBox:focus {{
+        border-color: {ACCENT_DARK};
+        outline: none;
+    }}
+    QComboBox::drop-down {{
+        subcontrol-origin: padding;
+        subcontrol-position: right center;
+        width: 28px;
+        border: none;
+        border-left: 1px solid {INPUT_BORDER};
+        border-top-right-radius: 6px;
+        border-bottom-right-radius: 6px;
+        background: transparent;
+    }}
+    QComboBox::down-arrow {{
+        width: 10px;
+        height: 10px;
+        image: none;
+        border-left:  4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top:   5px solid {TEXT_DIM};
+    }}
+    QComboBox QAbstractItemView {{
+        background-color: {INPUT_BG};
+        color: {TEXT};
+        selection-background-color: {ACCENT};
+        selection-color: #1a1a1a;
+        border: 1px solid {INPUT_BORDER};
+        border-radius: 6px;
+        padding: 3px;
+        outline: none;
+    }}
+    QComboBox QAbstractItemView::item {{
+        padding: 5px 10px;
+        border-radius: 4px;
+        min-height: 24px;
+    }}
 
-    style.configure("TFrame", background=BG)
-    style.configure("Panel.TFrame", background=PANEL)
-    style.configure("Status.TFrame", background=PANEL_DARK)
+    /* ── Scrollbars ── */
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 6px;
+        border-radius: 3px;
+        margin: 0;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {INPUT_BORDER};
+        border-radius: 3px;
+        min-width: 24px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background: {ACCENT_DARK};
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0;
+    }}
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+        background: none;
+    }}
+    QScrollBar:vertical {{
+        background: transparent;
+        width: 6px;
+        border-radius: 3px;
+        margin: 0;
+    }}
+    QScrollBar::handle:vertical {{
+        background: {INPUT_BORDER};
+        border-radius: 3px;
+        min-height: 24px;
+    }}
+    QScrollBar::handle:vertical:hover {{
+        background: {ACCENT_DARK};
+    }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+        height: 0;
+    }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+        background: none;
+    }}
 
-    style.configure("TLabel", background=BG, foreground=TEXT, font=("Helvetica", 11))
-    style.configure("Panel.TLabel", background=PANEL, foreground=TEXT, font=("Helvetica", 11))
-    style.configure("Status.TLabel", background=PANEL_DARK, foreground=TEXT_DIM, font=("Helvetica", 10))
-    style.configure("Heading.TLabel", background=PANEL, foreground=TEXT,
-                    font=("Helvetica", 13, "bold"))
-    style.configure("Value.TLabel", background=PANEL, foreground=ACCENT,
-                    font=("Helvetica", 10, "bold"))
-
-    style.configure("TSeparator", background=PANEL_DARK)
-
-    style.configure("TCombobox", fieldbackground=PANEL_DARK, background=PANEL_DARK,
-                    foreground=TEXT, arrowcolor=TEXT, borderwidth=0, padding=6)
-    style.map("TCombobox",
-              fieldbackground=[("readonly", PANEL_DARK)],
-              foreground=[("readonly", TEXT)],
-              background=[("active", ACCENT)])
-    root.option_add("*TCombobox*Listbox.background", PANEL_DARK)
-    root.option_add("*TCombobox*Listbox.foreground", TEXT)
-    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-    root.option_add("*TCombobox*Listbox.selectForeground", "#2b2b2b")
-
-    return style
+    /* ── Menus ── */
+    QMenu {{
+        background-color: {INPUT_BG};
+        color: {TEXT};
+        border: 1px solid {INPUT_BORDER};
+        border-radius: 8px;
+        padding: 4px;
+    }}
+    QMenu::item {{
+        padding: 6px 14px;
+        border-radius: 4px;
+    }}
+    QMenu::item:selected {{
+        background-color: {ACCENT};
+        color: #1a1a1a;
+    }}
+    QToolTip {{
+        background-color: {INPUT_BG};
+        color: {TEXT};
+        border: 1px solid {INPUT_BORDER};
+        border-radius: 4px;
+        padding: 4px 8px;
+    }}
+    """
