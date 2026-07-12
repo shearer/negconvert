@@ -1249,9 +1249,21 @@ def main():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("NegConvert")
     app.setStyle(QStyleFactory.create("Fusion"))
-    font = QFont(".AppleSystemUIFont", 13)
-    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
-    app.setFont(font)
+
+    if sys.platform == "darwin":
+        # San Francisco, via its private alias. macOS's own font smoothing
+        # makes hinting look worse here, unlike Windows/Linux, hence the
+        # opposite hinting preference from the Windows branch below.
+        font = QFont(".AppleSystemUIFont", 13)
+        font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        app.setFont(font)
+    elif sys.platform == "win32":
+        font = QFont("Segoe UI", 13)
+        font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+        app.setFont(font)
+    # else (Linux): desktop environments vary too much to guess a good
+    # hardcoded choice - leave Qt/fontconfig's own default alone.
+
     window = NegConvertApp()
     window.show()
     sys.exit(app.exec())
