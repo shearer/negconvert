@@ -44,7 +44,11 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch='arm64' if sys.platform == 'darwin' else None,
+    # None = build for the current machine's own architecture. CI now runs
+    # this on both an Apple Silicon and an Intel macOS runner (see
+    # .github/workflows/build.yml) to produce separate arm64/x86_64
+    # builds, so this can no longer be hardcoded to arm64.
+    target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
     icon=icon,
