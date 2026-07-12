@@ -568,10 +568,12 @@ class NegConvertApp(QMainWindow):
     # ---------- image IO ----------
 
     def open_image(self):
+        raw_patterns = " ".join(f"*{ext}" for ext in sorted(processor.RAW_EXTENSIONS))
+        image_patterns = " ".join(f"*{ext}" for ext in sorted(processor.IMAGE_EXTENSIONS))
         path, _ = QFileDialog.getOpenFileName(
             self, "Open negative or slide scan", "",
-            "All supported (*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.dng);;"
-            "Scanner RAW (DNG) (*.dng);;"
+            f"All supported ({image_patterns});;"
+            f"Scanner/Camera RAW ({raw_patterns});;"
             "Images (*.jpg *.jpeg *.png *.tif *.tiff *.bmp);;"
             "All files (*.*)"
         )
@@ -588,7 +590,8 @@ class NegConvertApp(QMainWindow):
         )
         if not paths:
             QMessageBox.information(self, "No images found",
-                                    "That folder has no supported image files (JPG/PNG/TIFF/BMP/DNG).")
+                                    "That folder has no supported image files "
+                                    "(JPG/PNG/TIFF/BMP, or a scanner/camera RAW format).")
             return
         self._load_photo_list(paths)
 

@@ -27,7 +27,22 @@ import numpy as np
 from PIL import Image
 
 EPS = 1e-6
-RAW_EXTENSIONS = {".dng"}
+# .dng covers both scanner-style Linear DNGs and camera DNGs; the rest are
+# native camera raw formats, read through the same rawpy/libraw path (see
+# _load_raw_file) - libraw identifies the actual format from file content,
+# not the extension, so this set only needs to make the files selectable.
+RAW_EXTENSIONS = {
+    ".dng",
+    ".cr2", ".cr3",           # Canon
+    ".nef", ".nrw",           # Nikon
+    ".arw", ".srf", ".sr2",   # Sony
+    ".raf",                   # Fujifilm
+    ".orf",                   # Olympus / OM System
+    ".rw2",                   # Panasonic
+    ".pef",                   # Pentax
+    ".raw", ".rwl",           # Leica
+    ".3fr",                   # Hasselblad
+}
 IMAGE_EXTENSIONS = RAW_EXTENSIONS | {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 
 # Color profiles offered on export. sRGB is built in to Pillow/LittleCMS;
@@ -99,43 +114,79 @@ def load_negative(path: str) -> tuple:
     """Load an image as a float32 RGB array in the 0..1 range.
 
     Returns (array, is_linear). Regular scans (JPEG/TIFF/PNG) are assumed
-    sRGB gamma-encoded, like almost all image files. Scanner DNGs (e.g.
-    Nikon Coolscan 5 ED via VueScan/SilverFast) are read through rawpy/
-    libraw with no tone curve applied, so they come back already linear.
+    sRGB gamma-encoded, like almost all image files. DNGs and native camera
+    raw files are read through rawpy/libraw with no tone curve applied, so
+    they come back already linear - see _load_raw_file for how scanner and
+    camera sources are told apart and handled differently.
     """
     ext = os.path.splitext(path)[1].lower()
     if ext in RAW_EXTENSIONS:
-        return _load_dng(path), True
+        return _load_raw_file(path), True
     img = Image.open(path).convert("RGB")
     return np.asarray(img, dtype=np.float32) / 255.0, False
 
 
-def _load_dng(path: str) -> np.ndarray:
+def _load_raw_file(path: str) -> np.ndarray:
+    """Load a DNG or native camera raw file (CR2, NEF, ARW, RAF, ...).
+
+    Two genuinely different kinds of file share this code path:
+
+    - Scanner-style Linear DNGs (e.g. Nikon Coolscan via VueScan/SilverFast)
+      carry already-assembled, non-mosaiced per-pixel RGB - there is no
+      color filter array, so there's nothing to demosaic, and the scanner's
+      3 output channels are already close to meaningful RGB on their own.
+    - A real camera sensor (Bayer or X-Trans) instead stores one raw
+      photosite reading per pixel, filtered through a color filter array
+      (CFA); those channels are *not* display RGB by themselves and need
+      demosaicing plus the camera's own white balance and color matrix
+      (both embedded in the file, applied by LibRaw) to become meaningful
+      color, the same way any raw photo editor processes a camera raw.
+
+    LibRaw tells the two apart via the file's own CFA metadata (raw_pattern
+    is a degenerate 1x1 "pattern" when there's no real mosaic, vs. a 2x2
+    Bayer or larger X-Trans pattern when there is), so this doesn't need
+    the caller to say which kind of file it's looking at.
+    """
     try:
         import rawpy
     except ImportError as exc:
         raise RuntimeError(
-            "Reading DNG files requires the 'rawpy' package. Install it with:\n"
+            "Reading RAW/DNG files requires the 'rawpy' package. Install it with:\n"
             "    pip install rawpy"
         ) from exc
 
     with rawpy.imread(path) as raw:
-        # Coolscan-style scanner DNGs are linear (non-mosaiced) raw data, so
-        # there is no debayering to do; we just want the sensor-proportional
-        # values with no white balance, color matrix, or tone curve applied.
-        rgb16 = raw.postprocess(
-            use_camera_wb=False,
-            user_wb=[1.0, 1.0, 1.0, 1.0],
-            no_auto_bright=True,
-            gamma=(1, 1),
-            output_bps=16,
-            output_color=rawpy.ColorSpace.raw,
-        )
+        mosaiced = raw.raw_pattern is not None and raw.raw_pattern.size > 1
+        if mosaiced:
+            # Demosaicing happens automatically; camera white balance is
+            # the best generally-available starting point, though it's
+            # calibrated for photographing a lit scene rather than a
+            # backlit negative on a copy stand, so it may need correcting
+            # via the film-base pipette/color-balance sliders afterward,
+            # same as an inaccurate orange-mask sample would.
+            rgb16 = raw.postprocess(
+                use_camera_wb=True,
+                no_auto_bright=True,
+                gamma=(1, 1),
+                output_bps=16,
+                output_color=rawpy.ColorSpace.sRGB,
+            )
+        else:
+            rgb16 = raw.postprocess(
+                use_camera_wb=False,
+                user_wb=[1.0, 1.0, 1.0, 1.0],
+                no_auto_bright=True,
+                gamma=(1, 1),
+                output_bps=16,
+                output_color=rawpy.ColorSpace.raw,
+            )
     if rgb16.shape[-1] == 1:
         # B&W scanner DNGs carry a single raw channel (no CFA to debayer),
         # so postprocess() returns (H, W, 1) instead of (H, W, 3). Replicate
         # it to RGB so the rest of the pipeline - which assumes 3 channels
-        # throughout - doesn't need a separate code path.
+        # throughout - doesn't need a separate code path. A real camera
+        # sensor always demosaics to 3 channels, so this only ever fires
+        # for the non-mosaiced branch above.
         rgb16 = np.repeat(rgb16, 3, axis=-1)
     return rgb16.astype(np.float32) / 65535.0
 
