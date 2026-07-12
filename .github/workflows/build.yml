@@ -9,6 +9,13 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
+env:
+  # Run JS actions on Node 24 ahead of GitHub's mandatory cutover (Node 20
+  # is removed from runners in September 2026) - actions/checkout,
+  # setup-python, and upload-artifact below are already pinned to
+  # Node24-declaring major versions, this just covers everything else too.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     strategy:
@@ -23,9 +30,9 @@ jobs:
             name: linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -109,7 +116,7 @@ jobs:
             "dist-installers/NegConvert-${{ steps.version.outputs.version }}-linux-x86_64.AppImage"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NegConvert-${{ matrix.name }}
           path: dist-installers/*
