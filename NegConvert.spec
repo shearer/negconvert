@@ -1,4 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Shared across macOS/Windows/Linux (see .github/workflows/build.yml) - only
+# the icon and the final macOS .app wrapping differ per platform.
+import sys
 
 a = Analysis(
     ['main.py'],
@@ -21,6 +24,13 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+if sys.platform == 'darwin':
+    icon = 'assets/NegConvert.icns'
+elif sys.platform == 'win32':
+    icon = 'assets/NegConvert.ico'  # generated at build time, see workflow
+else:
+    icon = None  # PyInstaller can't embed an icon in a Linux ELF binary
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -34,9 +44,10 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch='arm64',
+    target_arch='arm64' if sys.platform == 'darwin' else None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=icon,
 )
 coll = COLLECT(
     exe,
@@ -47,17 +58,19 @@ coll = COLLECT(
     upx_exclude=[],
     name='NegConvert',
 )
-app = BUNDLE(
-    coll,
-    name='NegConvert.app',
-    icon='assets/NegConvert.icns',
-    bundle_identifier='com.negconvert.app',
-    info_plist={
-        'CFBundleName': 'NegConvert',
-        'CFBundleDisplayName': 'NegConvert',
-        'CFBundleShortVersionString': '1.1.0',
-        'CFBundleVersion': '1.1.0',
-        'NSHighResolutionCapable': True,
-        'NSHumanReadableCopyright': 'NegConvert',
-    },
-)
+
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='NegConvert.app',
+        icon='assets/NegConvert.icns',
+        bundle_identifier='com.negconvert.app',
+        info_plist={
+            'CFBundleName': 'NegConvert',
+            'CFBundleDisplayName': 'NegConvert',
+            'CFBundleShortVersionString': '1.1.0',
+            'CFBundleVersion': '1.1.0',
+            'NSHighResolutionCapable': True,
+            'NSHumanReadableCopyright': 'NegConvert',
+        },
+    )

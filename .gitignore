@@ -1,5 +1,7 @@
 build/
 dist/
+dist-installers/
+assets/NegConvert.ico
 __pycache__/
 *.pyc
 .venv/
