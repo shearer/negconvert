@@ -1,1 +1,1 @@
-<img width="1464" height="924" alt="Bildschirmfoto 2026-07-13 um 21 19 24" src="https://github.com/user-attachments/assets/7b756d18-4516-4c66-85cb-38d3c9a5f9a6" />
+<img width="1470" height="924" alt="Bildschirmfoto 2026-07-13 um 21 22 03" src="https://github.com/user-attachments/assets/c4f219a3-ee75-4a97-9700-022379b6aa90" />
