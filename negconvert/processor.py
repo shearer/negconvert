@@ -589,10 +589,19 @@ def save_linear_dng(path: str, linear_rgb: np.ndarray) -> None:
         (50714, 4, 1, 0, False),                                    # BlackLevel
         (50717, 4, 1, 65535, False),                                # WhiteLevel
     ]
-    # metadata=None: suppress tifffile's default ImageDescription (a JSON
-    # blob describing the array shape) - noise a strict DNG parser doesn't
-    # expect and has no reason to need.
-    tifffile.imwrite(path, data16, photometric="linear_raw", extratags=extratags, metadata=None)
+    # photometric must be the actual PHOTOMETRIC.LINEAR_RAW enum/int (34892),
+    # not the string "linear_raw" - tifffile silently accepts an unrecognized
+    # string but then can't use it to infer which shape axes are the image
+    # vs. extra pages, and misreads a (H, W, 3) array as H separate
+    # single-channel (W, 3) pages instead of one (H, W, 3) image. And even
+    # with the correct enum, tifffile doesn't special-case this DNG-specific
+    # value the way it does standard RGB, so planarconfig="contig" still has
+    # to be passed explicitly to say "the last axis is interleaved channels,
+    # not more pages" - metadata=None suppresses tifffile's default
+    # ImageDescription (a JSON blob describing the array shape), noise a
+    # strict DNG parser doesn't expect and has no reason to need.
+    tifffile.imwrite(path, data16, photometric=tifffile.PHOTOMETRIC.LINEAR_RAW,
+                      planarconfig="contig", extratags=extratags, metadata=None)
 
 
 def convert_to_profile(rgb_uint8: np.ndarray, profile_name: str):
