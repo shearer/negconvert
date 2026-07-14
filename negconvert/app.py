@@ -476,8 +476,14 @@ class NegConvertApp(QMainWindow):
         self.aspect_combo.currentIndexChanged.connect(lambda _: self.on_aspect_change())
         layout.addWidget(self.aspect_combo)
 
-        reset_btn = PillButton(parent, "Reset Crop", command=self.reset_crop, bg=theme.PANEL)
-        layout.addWidget(reset_btn)
+        crop_btn_row = QWidget(parent)
+        crop_btn_row.setStyleSheet(f"background: {theme.PANEL};")
+        cbr = QHBoxLayout(crop_btn_row)
+        cbr.setContentsMargins(0, 0, 0, 0)
+        cbr.setSpacing(6)
+        cbr.addWidget(PillButton(crop_btn_row, "Apply Crop", command=self.apply_crop, bg=theme.PANEL))
+        cbr.addWidget(PillButton(crop_btn_row, "Reset Crop", command=self.reset_crop, bg=theme.PANEL))
+        layout.addWidget(crop_btn_row)
 
         hint = QLabel("While this tab is open, drag the corner\n"
                        "handles or the box itself on the image.\n"
@@ -1018,6 +1024,12 @@ class NegConvertApp(QMainWindow):
         if is_crop_tab != self.crop_mode:
             self.crop_mode = is_crop_tab
             self.render_preview()
+
+    def apply_crop(self):
+        if self.full_arr is None:
+            return
+        self.crop_mode = False
+        self.render_preview()
 
     def reset_crop(self):
         self.crop_rect = crop.FULL_RECT
