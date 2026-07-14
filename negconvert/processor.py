@@ -599,9 +599,16 @@ def save_linear_dng(path: str, linear_rgb: np.ndarray) -> None:
     # to be passed explicitly to say "the last axis is interleaved channels,
     # not more pages" - metadata=None suppresses tifffile's default
     # ImageDescription (a JSON blob describing the array shape), noise a
-    # strict DNG parser doesn't expect and has no reason to need.
+    # strict DNG parser doesn't expect and has no reason to need. Likewise,
+    # tifffile doesn't know LinearRaw's 3 samples are plain RGB, so left to
+    # its own defaults it tags 2 of them as ExtraSamples (unspecified extra
+    # channels) - which throws off Adobe's raw pipeline enough that Camera
+    # Raw/Lightroom refuse the file as an "unknown camera model" rather than
+    # reading it as a normal 3-channel raw image. extrasamples=False stops
+    # tifffile writing that tag.
     tifffile.imwrite(path, data16, photometric=tifffile.PHOTOMETRIC.LINEAR_RAW,
-                      planarconfig="contig", extratags=extratags, metadata=None)
+                      planarconfig="contig", extrasamples=False,
+                      extratags=extratags, metadata=None)
 
 
 def convert_to_profile(rgb_uint8: np.ndarray, profile_name: str):
