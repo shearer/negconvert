@@ -482,6 +482,7 @@ class NegConvertApp(QMainWindow):
         cbr.setContentsMargins(0, 0, 0, 0)
         cbr.setSpacing(6)
         cbr.addWidget(PillButton(crop_btn_row, "Apply Crop", command=self.apply_crop, bg=theme.PANEL))
+        cbr.addWidget(PillButton(crop_btn_row, "Redo Crop", command=self.redo_crop, bg=theme.PANEL))
         cbr.addWidget(PillButton(crop_btn_row, "Reset Crop", command=self.reset_crop, bg=theme.PANEL))
         layout.addWidget(crop_btn_row)
 
@@ -1029,6 +1030,12 @@ class NegConvertApp(QMainWindow):
         if self.full_arr is None:
             return
         self.crop_mode = False
+        self.render_preview()
+
+    def redo_crop(self):
+        if self.full_arr is None:
+            return
+        self.crop_mode = True
         self.render_preview()
 
     def reset_crop(self):
