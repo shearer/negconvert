@@ -1,4 +1,4 @@
-"""Core C-41 negative -> positive conversion math.
+"""Core negative/slide -> positive conversion math.
 
 Film density is a linear-light, logarithmic phenomenon: doubling the light
 that hit the film adds a fixed increment of dye density, and density is
@@ -11,11 +11,13 @@ Pipeline:
 1. Linearize the scan (undo sRGB gamma) - unless it's already linear (DNG).
 2. Divide by the (linearized) sampled film-base color to neutralize the
    orange mask, then take -log2 of that ratio to get a density image
-   (0 at the film base, increasing with exposure).
+   (0 at the film base, increasing with exposure). E-6 slides are already
+   a positive image, not a dye-masked negative, so that step flips sign
+   instead (density grows with scan *brightness*, not darkness).
 3. Apply per-channel density gain (color balance), an exposure shift, and
    a contrast scale - all in density/stops space.
 4. Map density back to a displayable 0..1 range, apply a gamma trim, and
-   re-encode to sRGB for viewing/saving.
+   re-encode to sRGB for viewing/saving. B&W collapses to neutral gray here.
 """
 import io
 import os
@@ -25,7 +27,22 @@ import numpy as np
 from PIL import Image
 
 EPS = 1e-6
-RAW_EXTENSIONS = {".dng"}
+# .dng covers both scanner-style Linear DNGs and camera DNGs; the rest are
+# native camera raw formats, read through the same rawpy/libraw path (see
+# _load_raw_file) - libraw identifies the actual format from file content,
+# not the extension, so this set only needs to make the files selectable.
+RAW_EXTENSIONS = {
+    ".dng",
+    ".cr2", ".cr3",           # Canon
+    ".nef", ".nrw",           # Nikon
+    ".arw", ".srf", ".sr2",   # Sony
+    ".raf",                   # Fujifilm
+    ".orf",                   # Olympus / OM System
+    ".rw2",                   # Panasonic
+    ".pef",                   # Pentax
+    ".raw", ".rwl",           # Leica
+    ".3fr",                   # Hasselblad
+}
 IMAGE_EXTENSIONS = RAW_EXTENSIONS | {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 
 # Color profiles offered on export. sRGB is built in to Pillow/LittleCMS;
@@ -34,6 +51,11 @@ IMAGE_EXTENSIONS = RAW_EXTENSIONS | {".jpg", ".jpeg", ".png", ".tif", ".tiff", "
 # RGB ships with macOS, but ProPhoto RGB doesn't, and neither is guaranteed
 # on other platforms).
 COLOR_PROFILES = ["sRGB", "Adobe RGB", "ProPhoto RGB"]
+
+# Film stock types offered on the Colors tab. C-41 (color negative) and B&W
+# negative both need the film-base division + density inversion below; E-6
+# (color slide/reversal) is already a positive, so it skips the inversion.
+FILM_MODES = ["C-41", "B&W", "E-6"]
 _ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 _PROFILE_FILES = {
     "Adobe RGB": os.path.join(_ASSETS_DIR, "AdobeRGB1998.icc"),
@@ -57,6 +79,7 @@ LUMA_WEIGHTS = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 @dataclass
 class Params:
+    mode: str = "C-41"        # one of FILM_MODES
     base_color: tuple = (0.85, 0.55, 0.35)  # typical orange mask guess
     exposure: float = 0.0     # stops, shifts the whole density image
     contrast: float = 1.0     # scales density spread around the mid pivot
@@ -69,6 +92,7 @@ class Params:
     shift_g: float = 0.0
     shift_b: float = 0.0
     saturation: float = 1.0   # chroma scale around luma, applied at the end
+    denoise: float = 0.0      # median-filter grain reduction, applied before Sharpening
     sharpen: float = 0.0      # unsharp-mask amount, applied last on the final sRGB output
 
     def reset_adjustments(self):
@@ -82,6 +106,7 @@ class Params:
         self.shift_g = 0.0
         self.shift_b = 0.0
         self.saturation = 1.0
+        self.denoise = 0.0
         self.sharpen = 0.0
 
 
@@ -89,38 +114,80 @@ def load_negative(path: str) -> tuple:
     """Load an image as a float32 RGB array in the 0..1 range.
 
     Returns (array, is_linear). Regular scans (JPEG/TIFF/PNG) are assumed
-    sRGB gamma-encoded, like almost all image files. Scanner DNGs (e.g.
-    Nikon Coolscan 5 ED via VueScan/SilverFast) are read through rawpy/
-    libraw with no tone curve applied, so they come back already linear.
+    sRGB gamma-encoded, like almost all image files. DNGs and native camera
+    raw files are read through rawpy/libraw with no tone curve applied, so
+    they come back already linear - see _load_raw_file for how scanner and
+    camera sources are told apart and handled differently.
     """
     ext = os.path.splitext(path)[1].lower()
     if ext in RAW_EXTENSIONS:
-        return _load_dng(path), True
+        return _load_raw_file(path), True
     img = Image.open(path).convert("RGB")
     return np.asarray(img, dtype=np.float32) / 255.0, False
 
 
-def _load_dng(path: str) -> np.ndarray:
+def _load_raw_file(path: str) -> np.ndarray:
+    """Load a DNG or native camera raw file (CR2, NEF, ARW, RAF, ...).
+
+    Two genuinely different kinds of file share this code path:
+
+    - Scanner-style Linear DNGs (e.g. Nikon Coolscan via VueScan/SilverFast)
+      carry already-assembled, non-mosaiced per-pixel RGB - there is no
+      color filter array, so there's nothing to demosaic, and the scanner's
+      3 output channels are already close to meaningful RGB on their own.
+    - A real camera sensor (Bayer or X-Trans) instead stores one raw
+      photosite reading per pixel, filtered through a color filter array
+      (CFA); those channels are *not* display RGB by themselves and need
+      demosaicing plus the camera's own white balance and color matrix
+      (both embedded in the file, applied by LibRaw) to become meaningful
+      color, the same way any raw photo editor processes a camera raw.
+
+    LibRaw tells the two apart via the file's own CFA metadata (raw_pattern
+    is a degenerate 1x1 "pattern" when there's no real mosaic, vs. a 2x2
+    Bayer or larger X-Trans pattern when there is), so this doesn't need
+    the caller to say which kind of file it's looking at.
+    """
     try:
         import rawpy
     except ImportError as exc:
         raise RuntimeError(
-            "Reading DNG files requires the 'rawpy' package. Install it with:\n"
+            "Reading RAW/DNG files requires the 'rawpy' package. Install it with:\n"
             "    pip install rawpy"
         ) from exc
 
     with rawpy.imread(path) as raw:
-        # Coolscan-style scanner DNGs are linear (non-mosaiced) raw data, so
-        # there is no debayering to do; we just want the sensor-proportional
-        # values with no white balance, color matrix, or tone curve applied.
-        rgb16 = raw.postprocess(
-            use_camera_wb=False,
-            user_wb=[1.0, 1.0, 1.0, 1.0],
-            no_auto_bright=True,
-            gamma=(1, 1),
-            output_bps=16,
-            output_color=rawpy.ColorSpace.raw,
-        )
+        mosaiced = raw.raw_pattern is not None and raw.raw_pattern.size > 1
+        if mosaiced:
+            # Demosaicing happens automatically; camera white balance is
+            # the best generally-available starting point, though it's
+            # calibrated for photographing a lit scene rather than a
+            # backlit negative on a copy stand, so it may need correcting
+            # via the film-base pipette/color-balance sliders afterward,
+            # same as an inaccurate orange-mask sample would.
+            rgb16 = raw.postprocess(
+                use_camera_wb=True,
+                no_auto_bright=True,
+                gamma=(1, 1),
+                output_bps=16,
+                output_color=rawpy.ColorSpace.sRGB,
+            )
+        else:
+            rgb16 = raw.postprocess(
+                use_camera_wb=False,
+                user_wb=[1.0, 1.0, 1.0, 1.0],
+                no_auto_bright=True,
+                gamma=(1, 1),
+                output_bps=16,
+                output_color=rawpy.ColorSpace.raw,
+            )
+    if rgb16.shape[-1] == 1:
+        # B&W scanner DNGs carry a single raw channel (no CFA to debayer),
+        # so postprocess() returns (H, W, 1) instead of (H, W, 3). Replicate
+        # it to RGB so the rest of the pipeline - which assumes 3 channels
+        # throughout - doesn't need a separate code path. A real camera
+        # sensor always demosaics to 3 channels, so this only ever fires
+        # for the non-mosaiced branch above.
+        rgb16 = np.repeat(rgb16, 3, axis=-1)
     return rgb16.astype(np.float32) / 65535.0
 
 
@@ -229,7 +296,8 @@ def estimate_base_color(arr: np.ndarray) -> tuple:
 
 def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
                  shadow_pct: float = 0.5, highlight_pct: float = 99.5,
-                 clip_floor: float = 0.01, mid_target: float = 0.214) -> tuple:
+                 clip_floor: float = 0.01, mid_target: float = 0.214,
+                 positive: bool = False) -> tuple:
     """Suggest (exposure, contrast, gamma) that map this image's *own*
     density histogram onto the output range: black point and white point
     from the shadow/highlight percentiles, and a gamma curve that repositions
@@ -256,15 +324,24 @@ def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
     that regardless of how good the base estimate was.
 
     Fully clipped pixels (any channel at or near raw zero - e.g. a blown sky)
-    are excluded from all three statistics first: density is -log2(ratio),
+    are excluded from all three statistics first: density is +-log2(ratio),
     which shoots toward infinity as the raw value hits zero, so even a small
     clipped population can hijack a percentile and distort the whole result.
+
+    `positive` must match the sign `convert_linear()` will use for this
+    image's mode (True for E-6 slides, False for C-41/B&W negatives) - the
+    percentiles below have to be taken in the same density direction the
+    actual conversion applies, or the suggested exposure/contrast/gamma end
+    up fitting the wrong end of the histogram.
     """
     base = np.array(base_color, dtype=np.float32)
     lin = arr if is_linear else srgb_to_linear(arr)
     base_lin = base if is_linear else srgb_to_linear(base)
     ratio = np.clip(lin / (base_lin + EPS), EPS, None)
-    density_luma = (-np.log2(ratio)).mean(axis=-1)
+    if positive:
+        density_luma = (DENSITY_RANGE + np.log2(ratio)).mean(axis=-1)
+    else:
+        density_luma = (-np.log2(ratio)).mean(axis=-1)
 
     unclipped = ratio.min(axis=-1) > clip_floor
     sample = density_luma[unclipped] if np.count_nonzero(unclipped) >= density_luma.size // 20 else density_luma
@@ -322,7 +399,16 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
     base_lin = base if is_linear else srgb_to_linear(base)
 
     ratio = np.clip(lin / (base_lin + EPS), EPS, None)
-    density = -np.log2(ratio)  # ~0 at the film base, grows with exposure
+    # ~0 at the film base, grows with exposure. E-6 slides are already a
+    # positive - bright scan = bright scene - so density has to grow with
+    # scan *brightness* there instead, anchored so the sampled reference
+    # (ratio ~= 1, e.g. a clear/highlight area) lands at DENSITY_RANGE
+    # (full white) rather than at 0 (black), the opposite anchor from a
+    # negative's clear film base.
+    if params.mode == "E-6":
+        density = DENSITY_RANGE + np.log2(ratio)
+    else:
+        density = -np.log2(ratio)
 
     # Color balance is an *additive* per-channel density shift, not a
     # multiplicative gain: density can be negative (e.g. a pixel slightly
@@ -366,11 +452,45 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
     output_linear = np.clip(density / DENSITY_RANGE, 0.0, 1.0)
     output_linear = np.power(output_linear, 1.0 / max(params.gamma, EPS))
 
+    if params.mode == "B&W":
+        # Collapse to true neutral gray - not just desaturated - regardless
+        # of the Saturation slider, using the same luma weights it uses.
+        # (The per-channel Red/Green/Blue shifts above still apply before
+        # this, acting like colored filters on a B&W enlarger.)
+        luma = np.dot(output_linear, LUMA_WEIGHTS)
+        output_linear = np.repeat(luma[..., None], 3, axis=-1)
+
     if params.saturation != 1.0:
         luma = np.dot(output_linear, LUMA_WEIGHTS)[..., None]
         output_linear = np.clip(luma + (output_linear - luma) * params.saturation, 0.0, 1.0)
 
     return output_linear
+
+
+def apply_denoise(arr: np.ndarray, amount: float) -> np.ndarray:
+    """Reduce grain/noise with a median filter - good at knocking down the
+    speckled, salt-and-pepper look of high-ISO/pushed C-41 grain while still
+    respecting hard edges, unlike a plain blur which would soften everything
+    equally.
+
+    `amount` blends it in over 0..1 (a 3x3 filter), then over 1..2 blends
+    from that into a 5x5 filter - a wider radius for heavier grain than a
+    fixed small filter can fully knock down, without a discontinuous jump
+    where the filter size switches.
+
+    Applied on the final sRGB output, *before* Sharpening: sharpening a
+    still-noisy image re-amplifies the grain, so denoising has to happen
+    first for the two controls to work together rather than fight.
+    """
+    if amount <= 0:
+        return arr
+    from scipy import ndimage
+    med3 = ndimage.median_filter(arr, size=(3, 3, 1))
+    if amount <= 1.0:
+        return arr + (med3 - arr) * amount
+    med5 = ndimage.median_filter(arr, size=(5, 5, 1))
+    extra = min(amount - 1.0, 1.0)
+    return med3 + (med5 - med3) * extra
 
 
 def apply_sharpen(arr: np.ndarray, amount: float, radius: float = 1.5, threshold: float = 0.02) -> np.ndarray:
@@ -399,6 +519,7 @@ def convert(arr: np.ndarray, params: Params, is_linear: bool = False) -> np.ndar
     """Apply the full negative->positive pipeline. Returns float32 0..1 sRGB."""
     output_linear = convert_linear(arr, params, is_linear)
     output = np.clip(linear_to_srgb(output_linear), 0.0, 1.0)
+    output = apply_denoise(output, params.denoise)
     return apply_sharpen(output, params.sharpen)
 
 
@@ -468,10 +589,26 @@ def save_linear_dng(path: str, linear_rgb: np.ndarray) -> None:
         (50714, 4, 1, 0, False),                                    # BlackLevel
         (50717, 4, 1, 65535, False),                                # WhiteLevel
     ]
-    # metadata=None: suppress tifffile's default ImageDescription (a JSON
-    # blob describing the array shape) - noise a strict DNG parser doesn't
-    # expect and has no reason to need.
-    tifffile.imwrite(path, data16, photometric="linear_raw", extratags=extratags, metadata=None)
+    # photometric must be the actual PHOTOMETRIC.LINEAR_RAW enum/int (34892),
+    # not the string "linear_raw" - tifffile silently accepts an unrecognized
+    # string but then can't use it to infer which shape axes are the image
+    # vs. extra pages, and misreads a (H, W, 3) array as H separate
+    # single-channel (W, 3) pages instead of one (H, W, 3) image. And even
+    # with the correct enum, tifffile doesn't special-case this DNG-specific
+    # value the way it does standard RGB, so planarconfig="contig" still has
+    # to be passed explicitly to say "the last axis is interleaved channels,
+    # not more pages" - metadata=None suppresses tifffile's default
+    # ImageDescription (a JSON blob describing the array shape), noise a
+    # strict DNG parser doesn't expect and has no reason to need. Likewise,
+    # tifffile doesn't know LinearRaw's 3 samples are plain RGB, so left to
+    # its own defaults it tags 2 of them as ExtraSamples (unspecified extra
+    # channels) - which throws off Adobe's raw pipeline enough that Camera
+    # Raw/Lightroom refuse the file as an "unknown camera model" rather than
+    # reading it as a normal 3-channel raw image. extrasamples=False stops
+    # tifffile writing that tag.
+    tifffile.imwrite(path, data16, photometric=tifffile.PHOTOMETRIC.LINEAR_RAW,
+                      planarconfig="contig", extrasamples=False,
+                      extratags=extratags, metadata=None)
 
 
 def convert_to_profile(rgb_uint8: np.ndarray, profile_name: str):

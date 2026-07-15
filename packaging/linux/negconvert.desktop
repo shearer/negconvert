@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NegConvert
+Comment=C-41/B&W/E-6 negative and slide converter
+Exec=NegConvert
+Icon=negconvert
+Categories=Graphics;Photography;
+Terminal=false

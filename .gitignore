@@ -1,7 +1,8 @@
 build/
 dist/
-.idea
+dist-installers/
+assets/NegConvert.ico
 __pycache__/
 *.pyc
 .venv/
-*.egg-info/
+.Rproj.user/
