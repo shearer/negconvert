@@ -1,4 +1,5 @@
 """PySide6 UI for NegConvert."""
+import dataclasses
 import os
 
 import numpy as np
@@ -190,7 +191,8 @@ def _film_base_hint(mode):
                  "for any color cast.")
     return ("Click the pipette, then click anywhere on\n"
              "the image to sample the orange mask from\n"
-             "unexposed film.")
+             "unexposed film.\n"
+             "Often a grey area inside the image works well.")
 
 
 class NegConvertApp(QMainWindow):
@@ -233,6 +235,8 @@ class NegConvertApp(QMainWindow):
 
         self.photos = []
         self.current_photo_index = -1
+        self._settings_clipboard = None
+        self._clipboard_source_name = None
 
         self._build_layout()
         self._bind_shortcuts()
@@ -293,7 +297,8 @@ class NegConvertApp(QMainWindow):
 
         # Filmstrip
         self.filmstrip = Filmstrip(central, on_select=self._select_photo,
-                                   on_mark_change=self._on_marks_changed)
+                                   on_mark_change=self._on_marks_changed,
+                                   on_context_menu=self._show_filmstrip_menu)
         main_layout.addWidget(self.filmstrip)
 
         # Status bar
@@ -561,7 +566,10 @@ class NegConvertApp(QMainWindow):
         h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h2)
 
-        self.marked_lbl = QLabel("Ctrl+click photos in the filmstrip\nto select several for batch export.")
+        self.marked_lbl = QLabel("Ctrl+click photos in the filmstrip\n"
+                                  "to select several for batch export.\n"
+                                  "Right-click a photo there to copy or\n"
+                                  "apply color/adjustment settings.")
         self.marked_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
         layout.addWidget(self.marked_lbl)
 
@@ -800,6 +808,59 @@ class NegConvertApp(QMainWindow):
         else:
             self.status_lbl.setText(
                 f"Exported {saved} photo{'s' if saved != 1 else ''} to {os.path.basename(folder)}")
+
+    def _show_filmstrip_menu(self, index, global_pos):
+        """Right-click on a filmstrip thumbnail: copy or apply color/
+        adjustment settings (film mode, base color, exposure, density,
+        contrast, gamma, color balance, saturation, denoise, sharpen).
+
+        Crop and rotation are left out - those are framing choices, not
+        part of the color conversion.
+        """
+        if not (0 <= index < len(self.photos)):
+            return
+        menu = QMenu(self)
+        menu.addAction("Copy Settings", lambda: self._copy_settings_from(index))
+        apply_action = menu.addAction("Apply Settings", lambda: self._apply_settings_to(index))
+        apply_action.setEnabled(self._settings_clipboard is not None)
+        if self._settings_clipboard is not None:
+            apply_action.setText(f"Apply Settings (from {self._clipboard_source_name})")
+        menu.exec(global_pos)
+
+    def _copy_settings_from(self, index):
+        item = self.photos[index]
+        if not self._ensure_photo_loaded(item):
+            return
+        self._settings_clipboard = dataclasses.replace(item.params)
+        self._clipboard_source_name = os.path.basename(item.path)
+        self.status_lbl.setText(f"Copied settings from {self._clipboard_source_name}.")
+
+    def _apply_settings_to(self, index):
+        if self._settings_clipboard is None:
+            return
+        marked = self.filmstrip.get_marked()
+        targets = sorted(marked) if marked else [index]
+
+        failed = []
+        for i in targets:
+            item = self.photos[i]
+            if not self._ensure_photo_loaded(item):
+                failed.append(os.path.basename(item.path))
+                continue
+            item.params = dataclasses.replace(self._settings_clipboard)
+            if i == self.current_photo_index:
+                self.params = item.params
+                self._sync_controls_from_state(item)
+                self.render_preview()
+
+        applied = len(targets) - len(failed)
+        if failed:
+            QMessageBox.critical(self, "Some photos failed to load",
+                                  f"Applied to {applied} of {len(targets)}.\n\nFailed:\n" + "\n".join(failed))
+        else:
+            self.status_lbl.setText(
+                f"Applied settings from {self._clipboard_source_name} to "
+                f"{applied} photo{'s' if applied != 1 else ''}.")
 
     # ---------- processing / rendering ----------
 

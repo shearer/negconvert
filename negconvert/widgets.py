@@ -500,6 +500,7 @@ class TabBar(QWidget):
 
 class _FilmstripCell(QFrame):
     clicked = Signal(int, bool)  # index, ctrl_held
+    right_clicked = Signal(int, QPoint)  # index, global position
     THUMB_W = 84
     THUMB_H = 64
 
@@ -554,15 +555,19 @@ class _FilmstripCell(QFrame):
             ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
             self.clicked.emit(self._index, ctrl)
 
+    def contextMenuEvent(self, event):
+        self.right_clicked.emit(self._index, event.globalPos())
+
 
 class Filmstrip(QWidget):
     MARK_COLOR = "#5c9fff"
 
-    def __init__(self, parent=None, on_select=None, on_mark_change=None, bg=None):
+    def __init__(self, parent=None, on_select=None, on_mark_change=None, on_context_menu=None, bg=None):
         super().__init__(parent)
         self._bg = bg or theme.PANEL_DARK
         self._on_select = on_select
         self._on_mark_change = on_mark_change
+        self._on_context_menu = on_context_menu
         self._cells = []
         self._selected = -1
         self._marked = set()
@@ -602,6 +607,7 @@ class Filmstrip(QWidget):
         for i, (path, pil_img) in enumerate(paths_and_thumbs):
             cell = _FilmstripCell(self._inner, i, path, pil_img)
             cell.clicked.connect(self._on_cell_click)
+            cell.right_clicked.connect(self._on_cell_right_click)
             self._inner_layout.addWidget(cell)
             self._cells.append(cell)
         self._inner_layout.addStretch()
@@ -612,6 +618,10 @@ class Filmstrip(QWidget):
         else:
             if self._on_select:
                 self._on_select(index)
+
+    def _on_cell_right_click(self, index, global_pos):
+        if self._on_context_menu:
+            self._on_context_menu(index, global_pos)
 
     def update_thumbnail(self, index, pil_img):
         if 0 <= index < len(self._cells):

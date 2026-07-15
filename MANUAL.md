@@ -126,8 +126,20 @@ Switch to another tab to preview the cropped image without the crop overlay.
 
 1. Load a folder of scans with **Open Folder…**.
 2. Adjust each frame individually by clicking through the filmstrip — settings are kept per-photo.
-3. Ctrl+click frames in the filmstrip to mark several for batch export (marked thumbnails are highlighted).
+3. Ctrl+click frames in the filmstrip to mark several (marked thumbnails are highlighted).
 4. On the **Export** tab, pick a format and profile, then click **Export Selected…** and choose a destination folder. Each marked photo is converted with its own saved settings and written as `<name>_positive.<ext>` into that folder.
+
+### Copying color settings to other frames
+
+If a whole roll was shot and scanned under consistent lighting, you can dial in the film mode, film base sample, exposure/density/contrast/gamma, color balance, saturation, denoise, and sharpening on one frame, then apply that exact same conversion to others instead of re-tuning each one by hand — using a right-click, copy/apply workflow on the filmstrip:
+
+1. Right-click the frame whose settings you want to reuse and choose **Copy Settings**.
+2. Select the frame(s) to apply it to:
+   - For one frame, just right-click that frame.
+   - For several, Ctrl+click to mark them first, then right-click any marked frame.
+3. Choose **Apply Settings** (only enabled once something has been copied).
+
+This overwrites the target frame(s)' color/adjustment settings with the copied ones. Crop and rotation are left untouched, since those are framing choices rather than part of the color conversion. It's a one-time copy, not a live link — adjusting the source frame afterward doesn't affect frames you already applied it to; right-click and **Copy Settings** again to update what's on the clipboard.
 
 ## Keyboard shortcuts
 
