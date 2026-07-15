@@ -141,6 +141,14 @@ If a whole roll was shot and scanned under consistent lighting, you can dial in 
 
 This overwrites the target frame(s)' color/adjustment settings with the copied ones. Crop and rotation are left untouched, since those are framing choices rather than part of the color conversion. It's a one-time copy, not a live link — adjusting the source frame afterward doesn't affect frames you already applied it to; right-click and **Copy Settings** again to update what's on the clipboard.
 
+## Remembering settings between sessions
+
+Every photo's settings - film mode, film base sample, exposure/density/contrast/gamma, color balance, saturation, denoise, sharpening, crop, and rotation - are saved automatically to a small sidecar file next to it, named `<original filename>.negconvert.json` (e.g. `frame12.jpg.negconvert.json`). It's written whenever you move to another frame, export, or quit the app - and also shortly (under a second) after you stop adjusting a photo you're still sitting on, so a crash or force-quit won't lose your latest edits.
+
+The next time you open that photo, or open a folder containing it, NegConvert reads the sidecar and puts you right back where you left off - the film base sample and auto exposure aren't re-estimated from scratch. Photos you never actually opened get no sidecar and load with the normal automatic film-base/exposure estimate, same as before.
+
+Sidecars travel with the image: copy or move a scan together with its `.negconvert.json` file and its settings come with it. Deleting the sidecar (or renaming the image without renaming the sidecar to match) just makes NegConvert treat that photo as never-adjusted again.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
