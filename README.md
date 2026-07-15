@@ -13,6 +13,8 @@ It supports color negative (C-41), black & white negative, and slide/reversal (E
 - Export to TIFF, PNG, JPEG, or Linear DNG, with sRGB, Adobe RGB, or ProPhoto RGB color profiles
 - Batch export across multiple selected frames in a filmstrip view
 
+See [MANUAL.md](MANUAL.md) for a full walkthrough of the interface and controls.
+
 ## Installation
 
 Prebuilt installers for macOS, Windows, and Linux are published on the [Releases page](https://github.com/shearer/negconvert/releases). Builds are unsigned, so the OS will show an "unknown developer" warning the first time you open one - see the notes below.
