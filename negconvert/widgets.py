@@ -616,6 +616,8 @@ class Filmstrip(QWidget):
         if ctrl:
             self.toggle_mark(index)
         else:
+            if self._marked:
+                self.clear_marks()
             if self._on_select:
                 self._on_select(index)
 
