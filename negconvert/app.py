@@ -1,4 +1,6 @@
 """PySide6 UI for NegConvert."""
+import dataclasses
+import json
 import os
 
 import numpy as np
@@ -8,7 +10,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QFrame, QHBoxLayout, QVBoxLayout,
     QStackedWidget, QComboBox, QSizePolicy, QMenu, QMessageBox, QFileDialog,
 )
-from PySide6.QtCore import Qt, Signal, QRect, QPoint
+from PySide6.QtCore import Qt, Signal, QRect, QPoint, QTimer
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QPainterPath,
     QPixmap, QImage, QFont, QIcon, QKeySequence, QShortcut,
@@ -28,6 +30,10 @@ CROP_HANDLE_R = 8
 TAB_COLORS, TAB_ADJUST, TAB_CROP, TAB_EXPORT = 0, 1, 2, 3
 STRAIGHTEN_GUIDE_COUNT = 10
 STRAIGHTEN_GUIDE_COLOR = "#ff3b30"
+# How long to wait, after the last settings change, before autosaving the
+# current photo's sidecar - long enough that a slider drag (which fires
+# on_slider continuously) doesn't hit the disk on every tick.
+AUTOSAVE_DEBOUNCE_MS = 800
 
 # Double-click cycles through these; None means fit-to-window.
 ZOOM_LEVELS = (None, 0.5, 1.0)
@@ -36,6 +42,9 @@ FRAME_COLORS = [("White", "#ffffff"), ("Middle Grey", "#808080"), ("Dark Grey", 
 FRAME_BORDER_COLOR = "#555555"
 DEFAULT_FRAME_COLOR = "#808080"
 IMAGE_FIT_SCALE = 0.9
+
+SIDECAR_SUFFIX = ".negconvert.json"
+SIDECAR_VERSION = 1
 
 
 class PhotoItem:
@@ -51,6 +60,59 @@ class PhotoItem:
         self.rotation_90 = 0
         self.straighten_angle = 0.0
         self.auto_baseline = (0.0, 1.0, 1.0)
+        # True once settings have been restored from (or saved to) this
+        # photo's sidecar file - tells _ensure_photo_loaded to keep the
+        # restored base_color/exposure/contrast/gamma instead of
+        # re-estimating them, and lets _flush_current_photo_state skip
+        # writing a sidecar for a photo nothing was ever set on.
+        self.has_saved_settings = False
+
+
+def _sidecar_path(image_path):
+    return image_path + SIDECAR_SUFFIX
+
+
+def _load_sidecar(item):
+    """Restore a photo's color/adjustment/crop settings from its per-image
+    sidecar file (`<name>.negconvert.json`) next to it, if one exists.
+    Returns True if settings were restored."""
+    path = _sidecar_path(item.path)
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        params_data = dict(data["params"])
+        params_data["base_color"] = tuple(params_data["base_color"])
+        item.params = processor.Params(**params_data)
+        item.crop_rect = tuple(data["crop_rect"])
+        item.aspect_ratio = data["aspect_ratio"]
+        item.rotation_90 = data["rotation_90"]
+        item.straighten_angle = data["straighten_angle"]
+    except Exception:
+        return False
+    item.has_saved_settings = True
+    return True
+
+
+def _save_sidecar(item):
+    """Persist a photo's current color/adjustment/crop settings to its
+    per-image sidecar file, so they're restored the next time this photo
+    (or the folder it's in) is opened again."""
+    data = {
+        "version": SIDECAR_VERSION,
+        "params": dataclasses.asdict(item.params),
+        "crop_rect": item.crop_rect,
+        "aspect_ratio": item.aspect_ratio,
+        "rotation_90": item.rotation_90,
+        "straighten_angle": item.straighten_angle,
+    }
+    try:
+        with open(_sidecar_path(item.path), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except OSError:
+        return
+    item.has_saved_settings = True
 
 
 class ImageCanvas(QWidget):
@@ -190,7 +252,8 @@ def _film_base_hint(mode):
                  "for any color cast.")
     return ("Click the pipette, then click anywhere on\n"
              "the image to sample the orange mask from\n"
-             "unexposed film.")
+             "unexposed film.\n"
+             "Often a grey area inside the image works well.")
 
 
 class NegConvertApp(QMainWindow):
@@ -233,6 +296,12 @@ class NegConvertApp(QMainWindow):
 
         self.photos = []
         self.current_photo_index = -1
+        self._settings_clipboard = None
+        self._clipboard_source_name = None
+
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.timeout.connect(self._flush_current_photo_state)
 
         self._build_layout()
         self._bind_shortcuts()
@@ -293,7 +362,8 @@ class NegConvertApp(QMainWindow):
 
         # Filmstrip
         self.filmstrip = Filmstrip(central, on_select=self._select_photo,
-                                   on_mark_change=self._on_marks_changed)
+                                   on_mark_change=self._on_marks_changed,
+                                   on_context_menu=self._show_filmstrip_menu)
         main_layout.addWidget(self.filmstrip)
 
         # Status bar
@@ -561,7 +631,10 @@ class NegConvertApp(QMainWindow):
         h2.setStyleSheet(f"color: {theme.TEXT}; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; background: {theme.PANEL};")
         layout.addWidget(h2)
 
-        self.marked_lbl = QLabel("Ctrl+click photos in the filmstrip\nto select several for batch export.")
+        self.marked_lbl = QLabel("Ctrl+click photos in the filmstrip\n"
+                                  "to select several for batch export.\n"
+                                  "Right-click a photo there to copy or\n"
+                                  "apply color/adjustment settings.")
         self.marked_lbl.setStyleSheet(f"color: {theme.TEXT_DIM}; background: {theme.PANEL}; font-size: 11px; line-height: 1.5;")
         layout.addWidget(self.marked_lbl)
 
@@ -571,6 +644,10 @@ class NegConvertApp(QMainWindow):
     def _bind_shortcuts(self):
         QShortcut(QKeySequence.StandardKey.Open, self, self.open_image)
         QShortcut(QKeySequence.StandardKey.Save, self, self.save_image)
+
+    def closeEvent(self, event):
+        self._flush_current_photo_state()
+        super().closeEvent(event)
 
     # ---------- image IO ----------
 
@@ -604,22 +681,42 @@ class NegConvertApp(QMainWindow):
 
     def _load_photo_list(self, paths):
         self.photos = [PhotoItem(p) for p in paths]
+        for item in self.photos:
+            _load_sidecar(item)
         self.current_photo_index = -1
         thumbs = [(item.path, processor.extract_thumbnail(item.path)) for item in self.photos]
         self.filmstrip.set_photos(thumbs)
         self._select_photo(0)
 
+    def _flush_current_photo_state(self):
+        """Write the on-screen adjustments back into the active PhotoItem
+        and save them to its sidecar file, so they're there next time this
+        photo (or the folder it's in) is opened again."""
+        self._autosave_timer.stop()
+        if not (0 <= self.current_photo_index < len(self.photos)):
+            return
+        item = self.photos[self.current_photo_index]
+        item.params = self.params
+        item.crop_rect = self.crop_rect
+        item.aspect_ratio = self.aspect_ratio
+        item.rotation_90 = self.rotation_90
+        item.straighten_angle = self.straighten_angle
+        _save_sidecar(item)
+
+    def _schedule_autosave(self):
+        """Debounced save of the current photo's sidecar, used for changes
+        that don't already go through _flush_current_photo_state (switching
+        photos, exporting, closing). Restarts the idle timer on every call,
+        so a slider drag - which fires this continuously - only writes once,
+        shortly after you stop moving it."""
+        if 0 <= self.current_photo_index < len(self.photos):
+            self._autosave_timer.start(AUTOSAVE_DEBOUNCE_MS)
+
     def _select_photo(self, index):
         if not (0 <= index < len(self.photos)) or index == self.current_photo_index:
             return
 
-        if 0 <= self.current_photo_index < len(self.photos):
-            outgoing = self.photos[self.current_photo_index]
-            outgoing.params = self.params
-            outgoing.crop_rect = self.crop_rect
-            outgoing.aspect_ratio = self.aspect_ratio
-            outgoing.rotation_90 = self.rotation_90
-            outgoing.straighten_angle = self.straighten_angle
+        self._flush_current_photo_state()
 
         item = self.photos[index]
         if not self._ensure_photo_loaded(item):
@@ -661,10 +758,12 @@ class NegConvertApp(QMainWindow):
                                  f"{os.path.basename(item.path)}: {exc}")
             return False
         item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
-        item.params.base_color = processor.estimate_base_color(item.preview_arr)
+        if not item.has_saved_settings:
+            item.params.base_color = processor.estimate_base_color(item.preview_arr)
         exposure, contrast, gamma = processor.auto_levels(
             item.preview_arr, item.params.base_color, item.is_linear)
-        item.params.exposure, item.params.contrast, item.params.gamma = exposure, contrast, gamma
+        if not item.has_saved_settings:
+            item.params.exposure, item.params.contrast, item.params.gamma = exposure, contrast, gamma
         item.auto_baseline = (exposure, contrast, gamma)
         item.loaded = True
         return True
@@ -770,13 +869,7 @@ class NegConvertApp(QMainWindow):
         ext = dict(self.EXPORT_FORMATS)[self.format_combo.currentText()]
         profile_name = self.profile_combo.currentText()
 
-        if 0 <= self.current_photo_index < len(self.photos):
-            current = self.photos[self.current_photo_index]
-            current.params = self.params
-            current.crop_rect = self.crop_rect
-            current.aspect_ratio = self.aspect_ratio
-            current.rotation_90 = self.rotation_90
-            current.straighten_angle = self.straighten_angle
+        self._flush_current_photo_state()
 
         saved, failed = 0, []
         for index in marked:
@@ -801,6 +894,60 @@ class NegConvertApp(QMainWindow):
             self.status_lbl.setText(
                 f"Exported {saved} photo{'s' if saved != 1 else ''} to {os.path.basename(folder)}")
 
+    def _show_filmstrip_menu(self, index, global_pos):
+        """Right-click on a filmstrip thumbnail: copy or apply color/
+        adjustment settings (film mode, base color, exposure, density,
+        contrast, gamma, color balance, saturation, denoise, sharpen).
+
+        Crop and rotation are left out - those are framing choices, not
+        part of the color conversion.
+        """
+        if not (0 <= index < len(self.photos)):
+            return
+        menu = QMenu(self)
+        menu.addAction("Copy Settings", lambda: self._copy_settings_from(index))
+        apply_action = menu.addAction("Apply Settings", lambda: self._apply_settings_to(index))
+        apply_action.setEnabled(self._settings_clipboard is not None)
+        if self._settings_clipboard is not None:
+            apply_action.setText(f"Apply Settings (from {self._clipboard_source_name})")
+        menu.exec(global_pos)
+
+    def _copy_settings_from(self, index):
+        item = self.photos[index]
+        if not self._ensure_photo_loaded(item):
+            return
+        self._settings_clipboard = dataclasses.replace(item.params)
+        self._clipboard_source_name = os.path.basename(item.path)
+        self.status_lbl.setText(f"Copied settings from {self._clipboard_source_name}.")
+
+    def _apply_settings_to(self, index):
+        if self._settings_clipboard is None:
+            return
+        marked = self.filmstrip.get_marked()
+        targets = sorted(marked) if marked else [index]
+
+        failed = []
+        for i in targets:
+            item = self.photos[i]
+            if not self._ensure_photo_loaded(item):
+                failed.append(os.path.basename(item.path))
+                continue
+            item.params = dataclasses.replace(self._settings_clipboard)
+            if i == self.current_photo_index:
+                self.params = item.params
+                self._sync_controls_from_state(item)
+                self.render_preview()
+            _save_sidecar(item)
+
+        applied = len(targets) - len(failed)
+        if failed:
+            QMessageBox.critical(self, "Some photos failed to load",
+                                  f"Applied to {applied} of {len(targets)}.\n\nFailed:\n" + "\n".join(failed))
+        else:
+            self.status_lbl.setText(
+                f"Applied settings from {self._clipboard_source_name} to "
+                f"{applied} photo{'s' if applied != 1 else ''}.")
+
     # ---------- processing / rendering ----------
 
     def on_slider(self):
@@ -816,6 +963,7 @@ class NegConvertApp(QMainWindow):
         self.params.shift_r = self.shift_r_s.get()
         self.params.shift_g = self.shift_g_s.get()
         self.params.shift_b = self.shift_b_s.get()
+        self._schedule_autosave()
         self.render_preview()
 
     def reset_adjustments(self):
@@ -895,6 +1043,7 @@ class NegConvertApp(QMainWindow):
         self.gamma_s.set_default(gamma)
         if 0 <= self.current_photo_index < len(self.photos):
             self.photos[self.current_photo_index].auto_baseline = (exposure, contrast, gamma)
+        self._schedule_autosave()
         self.render_preview()
 
     def _update_base_swatch(self):
@@ -1043,6 +1192,7 @@ class NegConvertApp(QMainWindow):
         self.rotation_90 = 0
         self.straighten_angle = 0.0
         self.straighten_s.set(0.0)
+        self._schedule_autosave()
         self.render_preview()
 
     def on_aspect_change(self):
@@ -1051,6 +1201,7 @@ class NegConvertApp(QMainWindow):
         if self.full_arr is not None and ratio is not None:
             H, W = self._working_full_dims()
             self.crop_rect = crop.fit_rect_to_ratio(self.crop_rect, ratio, W, H)
+        self._schedule_autosave()
         self.render_preview()
 
     def rotate_left(self):
@@ -1058,6 +1209,7 @@ class NegConvertApp(QMainWindow):
             return
         self.rotation_90 = (self.rotation_90 - 1) % 4
         self.crop_rect = crop.FULL_RECT
+        self._schedule_autosave()
         self.render_preview()
 
     def rotate_right(self):
@@ -1065,6 +1217,7 @@ class NegConvertApp(QMainWindow):
             return
         self.rotation_90 = (self.rotation_90 + 1) % 4
         self.crop_rect = crop.FULL_RECT
+        self._schedule_autosave()
         self.render_preview()
 
     def on_straighten_change(self):
@@ -1072,6 +1225,7 @@ class NegConvertApp(QMainWindow):
         if self.full_arr is not None and self.crop_rect == crop.FULL_RECT:
             h, w = self._working_full_dims()
             self.crop_rect = crop.safe_crop_for_straighten(self.straighten_angle, w, h)
+        self._schedule_autosave()
         self.render_preview()
 
     def _on_straighten_drag_start(self):
@@ -1243,7 +1397,9 @@ class NegConvertApp(QMainWindow):
         self._draw_crop_overlay()
 
     def on_canvas_release(self):
-        self._crop_drag = None
+        if self._crop_drag is not None:
+            self._crop_drag = None
+            self._schedule_autosave()
 
     def _sample_base_from_click(self, x, y):
         if self._sample_arr is None:
