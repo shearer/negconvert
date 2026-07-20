@@ -758,10 +758,12 @@ class NegConvertApp(QMainWindow):
                                  f"{os.path.basename(item.path)}: {exc}")
             return False
         item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
+        analysis_arr = self._analysis_region(
+            item.preview_arr, item.crop_rect, item.rotation_90, item.straighten_angle)
         if not item.has_saved_settings:
-            item.params.base_color = processor.estimate_base_color(item.preview_arr, item.is_linear)
+            item.params.base_color = processor.estimate_base_color(analysis_arr, item.is_linear)
         exposure, contrast, gamma, saturation = processor.auto_density_grade(
-            item.preview_arr, item.params.base_color, item.is_linear)
+            analysis_arr, item.params.base_color, item.is_linear)
         if not item.has_saved_settings:
             item.params.exposure, item.params.contrast = exposure, contrast
             item.params.gamma, item.params.saturation = gamma, saturation
@@ -993,7 +995,7 @@ class NegConvertApp(QMainWindow):
             self.status_lbl.setText(
                 "Auto Base Color has no effect on B&W scans - there's no color cast to correct.")
             return
-        self.params.base_color = processor.estimate_base_color(self.preview_arr, self.is_linear)
+        self.params.base_color = processor.estimate_base_color(self._analysis_arr(), self.is_linear)
         self._update_base_swatch()
         self._apply_auto_density_grade()
 
@@ -1007,7 +1009,7 @@ class NegConvertApp(QMainWindow):
             # neutral reference rather than whatever was last sampled.
             self.params.base_color = (1.0, 1.0, 1.0)
         elif self.preview_arr is not None:
-            self.params.base_color = processor.estimate_base_color(self.preview_arr, self.is_linear)
+            self.params.base_color = processor.estimate_base_color(self._analysis_arr(), self.is_linear)
         self._update_base_swatch()
         self._update_mode_ui(mode)
         self._apply_auto_density_grade()
@@ -1032,7 +1034,7 @@ class NegConvertApp(QMainWindow):
             self.render_preview()
             return
         exposure, contrast, gamma, saturation = processor.auto_density_grade(
-            self.preview_arr, self.params.base_color, self.is_linear,
+            self._analysis_arr(), self.params.base_color, self.is_linear,
             positive=self.params.mode == "E-6")
         self.params.exposure = exposure
         self.params.contrast = contrast
@@ -1184,7 +1186,18 @@ class NegConvertApp(QMainWindow):
         if self.full_arr is None:
             return
         self.crop_mode = False
-        self.render_preview()
+        # Re-measure Auto Base Color / Auto Density-Grade against just the
+        # cropped region - a scanner border, sprocket holes, or a
+        # neighboring frame the crop just excluded would otherwise keep
+        # skewing those statistics even though the export no longer
+        # includes them. Same "structural change refreshes the auto
+        # baseline" convention as a mode switch or a fresh base-color
+        # sample (see _on_mode_change/auto_base), so it overwrites the
+        # current Exposure/Contrast/Gamma/Saturation the same way those do.
+        if self.params.mode != "B&W":
+            self.params.base_color = processor.estimate_base_color(self._analysis_arr(), self.is_linear)
+            self._update_base_swatch()
+        self._apply_auto_density_grade()
 
     def redo_crop(self):
         if self.full_arr is None:
@@ -1245,6 +1258,22 @@ class NegConvertApp(QMainWindow):
 
     def _apply_rotation(self, arr):
         return self._apply_rotation_to(arr, self.rotation_90, self.straighten_angle)
+
+    @staticmethod
+    def _analysis_region(arr, crop_rect, rotation_90, straighten_angle):
+        """The region Auto Base Color / Auto Density-Grade should be measured
+        from: rotated/straightened and cropped the same way the final export
+        will be, so a scanner border, sprocket holes, or a neighboring frame
+        that the crop excludes don't skew the automatic statistics - they
+        measure what the user actually kept, not the whole scan.
+        """
+        working = NegConvertApp._apply_rotation_to(arr, rotation_90, straighten_angle)
+        h, w = working.shape[:2]
+        x0, y0, x1, y1 = crop.crop_pixel_box((h, w), crop_rect)
+        return working[y0:y1, x0:x1]
+
+    def _analysis_arr(self):
+        return self._analysis_region(self.preview_arr, self.crop_rect, self.rotation_90, self.straighten_angle)
 
     @staticmethod
     def _apply_rotation_to(arr, rotation_90, straighten_angle):
