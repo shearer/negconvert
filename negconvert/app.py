@@ -433,7 +433,7 @@ class NegConvertApp(QMainWindow):
             ("highlight_density_s","Highlight Density", -2.0,  2.0,  self.params.highlight_density,0.0),
             ("contrast_s",        "Contrast",            0.5,  2.5,  self.params.contrast,          1.0),
             ("gamma_s",           "Gamma",               0.3,  2.5,  self.params.gamma,             1.0),
-            ("saturation_s",      "Saturation",          0.0,  2.0,  self.params.saturation,        1.0),
+            ("saturation_s",      "Saturation",          0.0,  3.0,  self.params.saturation,        1.0),
             ("denoise_s",         "Denoise",             0.0,  2.0,  self.params.denoise,           0.0),
             ("sharpen_s",         "Sharpening",          0.0,  2.0,  self.params.sharpen,           0.0),
         ]
