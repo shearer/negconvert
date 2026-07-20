@@ -80,8 +80,8 @@ ANCHOR_METER_STRENGTH = 0.2   # how far Exposure pulls the metered median toward
 ANCHOR_METER_BAND = 0.12      # that pull's cap, as a fraction of DENSITY_RANGE - keeps a deliberately low/high-key frame from being flattened to neutral
 GRADE_NOMINAL_RATIO = 2.0     # DENSITY_RANGE / (P90-P10) for a "textbook normal" tonal histogram - the ~0.5-99.5th vs ~10-90th percentile span ratio of a roughly Gaussian distribution (z-score ratio 5.15/2.56 ~= 2.0), not tied to any particular exposure/contrast calibration. Recompute this if texture_lo_pct/texture_hi_pct below ever change.
 GRADE_STRENGTH = 0.5          # 0 = same Contrast on every frame, 1 = every frame's textural range fully normalized to that statistical norm
-SATURATION_BOOST_STRENGTH = 0.35  # fraction of a "full" contrast-coupled saturation boost auto_density_grade suggests - see its docstring
-SATURATION_BOOST_MAX = 1.6        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
+SATURATION_BOOST_STRENGTH = 1.0   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; 1.0 is the calibrated match (not headroom to tune down casually - see the derivation there)
+SATURATION_BOOST_MAX = 2.0        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
 
 # Rec. 709 luma weights, used to hold brightness fixed while scaling
 # chroma for the Saturation control.
@@ -358,20 +358,28 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
     trim, and dropping it (an earlier version of this function did) is what
     made images read as flat despite the baseline stretch above.
 
-    Saturation gets a small suggested boost when Gamma lands below 1.0,
+    Saturation gets a suggested boost when Gamma lands below 1.0,
     compensating for a real effect that formula doesn't otherwise produce:
     on real film/paper, added contrast inherently pulls colors apart
     (that's why NegPy's own per-channel H&D curves need a "Dye Mute"
     control to tone the effect *back down*, rather than having none at
     all). `convert_linear()`'s gamma is deliberately tone-only - hue-safe
     but flat - so this suggests a uniform-across-tones Saturation lift
-    instead: SATURATION_BOOST_STRENGTH of a "full" boost tied to how far
-    below 1.0 Gamma landed, capped at SATURATION_BOOST_MAX. Uniform, not
-    tone-dependent, on purpose - an earlier version scaled each pixel's
-    chroma by the gamma curve's local slope, which peaks near white and so
-    amplified whatever small color cast sat in the highlights right along
-    with genuine saturation, reintroducing the very cast this function's
-    hue-safe gamma was meant to fix.
+    instead, sized to match what a per-channel power curve x**(1/gamma)
+    would have done to an average pixel's chroma/luma ratio: for a pure
+    power law, chroma scales by the curve's local slope while luma follows
+    the curve itself, and their ratio (slope * x / f(x)) reduces to exactly
+    1/gamma regardless of x - so SATURATION_BOOST_STRENGTH is calibrated to
+    1.0, not a fractional damping of that boost (a smaller value here
+    quietly under-restores it - the pre-1.0 default did, and read as pale/
+    desaturated next to the old per-channel gamma). SATURATION_BOOST_MAX
+    still caps it, so a very low Gamma can't push it to an implausible
+    extreme. Uniform, not tone-dependent, on purpose - an earlier version
+    scaled each pixel's chroma by the gamma curve's local slope directly
+    (not this ratio), which peaks near white and so amplified whatever
+    small color cast sat in the highlights right along with genuine
+    saturation, reintroducing the very cast this function's hue-safe gamma
+    was meant to fix.
 
     `base_color` is only ever an estimate, and if it's off - notably if the
     frame has no true clear-film area to sample from - that shows up as a
