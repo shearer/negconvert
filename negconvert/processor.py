@@ -80,7 +80,8 @@ ANCHOR_METER_STRENGTH = 0.2   # how far Exposure pulls the metered median toward
 ANCHOR_METER_BAND = 0.12      # that pull's cap, as a fraction of DENSITY_RANGE - keeps a deliberately low/high-key frame from being flattened to neutral
 GRADE_NOMINAL_RATIO = 2.0     # DENSITY_RANGE / (P90-P10) for a "textbook normal" tonal histogram - the ~0.5-99.5th vs ~10-90th percentile span ratio of a roughly Gaussian distribution (z-score ratio 5.15/2.56 ~= 2.0), not tied to any particular exposure/contrast calibration. Recompute this if texture_lo_pct/texture_hi_pct below ever change.
 GRADE_STRENGTH = 0.5          # 0 = same Contrast on every frame, 1 = every frame's textural range fully normalized to that statistical norm
-SATURATION_BOOST_STRENGTH = 1.0   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; 1.0 is the calibrated match (not headroom to tune down casually - see the derivation there)
+GAMMA_STRENGTH = 0.5          # 0 = Gamma always 1.0, 1 = the median always lands exactly on mid_target - see auto_density_grade's docstring for why this needs damping like its siblings above
+SATURATION_BOOST_STRENGTH = 1.3   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; >1.0 is a deliberate extra push past the exact physical match (real photos still read a bit flat at exactly 1.0)
 SATURATION_BOOST_MAX = 2.0        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
 
 # Center-weighted metering for auto_density_grade's percentile stats (see
@@ -525,9 +526,23 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
     density_median = (median + exposure - pivot) * contrast + pivot
     normalized_median = min(max(density_median / DENSITY_RANGE, EPS), 1.0 - EPS)
     if abs(normalized_median - mid_target) < EPS:
-        gamma = 1.0
+        full_gamma = 1.0
     else:
-        gamma = float(np.log(normalized_median) / np.log(mid_target))
+        full_gamma = float(np.log(normalized_median) / np.log(mid_target))
+
+    # Even a perfectly ordinary, symmetric tonal histogram needs full_gamma
+    # ~= 0.45 here (mid_target sits well off the window's natural center by
+    # design, to counteract linear_to_srgb's brightening of mid-values - see
+    # above), and real photos skew further still: most cluster more pixels
+    # into mid/bright tones than shadows (sky, skin, foliage, sunlit walls),
+    # pushing the median - and so full_gamma - down further before there's
+    # anything actually unusual to correct. Auto Density and Auto Grade both
+    # damp their own correction for exactly this kind of reason (see
+    # ANCHOR_METER_STRENGTH, GRADE_STRENGTH) rather than applying it at full
+    # strength on every frame; Gamma didn't, making it the one auto
+    # adjustment with no conservatism built in - which read as images
+    # routinely coming out darker/more contrasty than intended.
+    gamma = 1.0 + GAMMA_STRENGTH * (full_gamma - 1.0)
     gamma = float(np.clip(gamma, 0.3, 2.5))
 
     # Saturation: a uniform-across-tones compensation for gamma's
