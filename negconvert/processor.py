@@ -83,6 +83,16 @@ GRADE_STRENGTH = 0.5          # 0 = same Contrast on every frame, 1 = every fram
 SATURATION_BOOST_STRENGTH = 1.0   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; 1.0 is the calibrated match (not headroom to tune down casually - see the derivation there)
 SATURATION_BOOST_MAX = 2.0        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
 
+# Center-weighted metering for auto_density_grade's percentile stats (see
+# _center_weight docstring): radii in frame-half-heights/widths where the
+# weight has fallen to 0.5, and the falloff's sharpness beyond that.
+# Vertical radius tighter than horizontal, since a bright sky/ceiling
+# sitting at the top of the frame is a far more common false read than one
+# sitting at the left/right edges.
+CENTER_WEIGHT_RADIUS_Y = 0.45
+CENTER_WEIGHT_RADIUS_X = 0.65
+CENTER_WEIGHT_FALLOFF = 4.0
+
 # Rec. 709 luma weights, used to hold brightness fixed while scaling
 # chroma for the Saturation control.
 LUMA_WEIGHTS = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -326,6 +336,44 @@ def estimate_base_color(arr: np.ndarray, is_linear: bool = False) -> tuple:
     return tuple(float(v) for v in base)
 
 
+def _center_weight(h: int, w: int) -> np.ndarray:
+    """Per-pixel metering weight for auto_density_grade's percentile stats:
+    peaks at the frame center and tapers toward the edges - the same
+    "center-weighted average" convention an in-camera light meter uses.
+
+    Without this, a large sky (or any other big, tonally uniform highlight
+    block) counts exactly as much as the actual subject in the median/
+    percentile stats below. Since a color negative develops *more* density
+    where the scene was brighter, a frame that's a third sky drags the
+    whole-frame median toward the sky's brightness - which auto_density_grade
+    then reads as "this scene is naturally high-key" and, via both the Auto
+    Density pull and the Gamma repositioning, under-exposes the actual
+    subject to compensate for a mood the sky invented. Down-weighting the
+    frame edges keeps the statistics anchored on whatever's near the middle
+    instead. The vertical falloff is tighter than the horizontal one, since
+    a bright sky/ceiling at the *top* of the frame is a far more common
+    false read than one at the left/right edges.
+    """
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    ny = (yy - (h - 1) / 2.0) / (h / 2.0)
+    nx = (xx - (w - 1) / 2.0) / (w / 2.0)
+    r = np.sqrt((ny / CENTER_WEIGHT_RADIUS_Y) ** 2 + (nx / CENTER_WEIGHT_RADIUS_X) ** 2)
+    return 1.0 / (1.0 + r ** CENTER_WEIGHT_FALLOFF)
+
+
+def _weighted_percentile(values: np.ndarray, weights: np.ndarray, percentiles) -> np.ndarray:
+    """np.percentile, but each value's contribution to the ranking is scaled
+    by `weights` instead of counted equally - used to fold _center_weight
+    into auto_density_grade's percentile stats without needing a separate,
+    hard-edged region cutout."""
+    order = np.argsort(values)
+    v = values[order]
+    w = weights[order]
+    cum = np.cumsum(w) - 0.5 * w
+    cum /= w.sum()
+    return np.interp(np.asarray(percentiles) / 100.0, cum, v)
+
+
 def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
                         shadow_pct: float = 0.5, highlight_pct: float = 99.5,
                         texture_lo_pct: float = 10.0, texture_hi_pct: float = 90.0,
@@ -412,6 +460,9 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
     shoots toward infinity as the raw value hits zero, so even a small
     clipped population can hijack a percentile and distort the whole result.
 
+    All the percentiles below are center-weighted, not a flat per-pixel
+    count - see _center_weight for why a large sky needs that.
+
     `positive` must match the sign `convert_linear()` will use for this
     image's mode (True for E-6 slides, False for C-41/B&W negatives) - the
     percentiles below have to be taken in the same density direction the
@@ -427,11 +478,16 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
     else:
         density_luma = (-np.log2(ratio)).mean(axis=-1)
 
-    unclipped = ratio.min(axis=-1) > clip_floor
-    sample = density_luma[unclipped] if np.count_nonzero(unclipped) >= density_luma.size // 20 else density_luma
+    weights = _center_weight(*density_luma.shape)
 
-    lo, p_lo, median, p_hi, hi = (float(v) for v in np.percentile(
-        sample, [shadow_pct, texture_lo_pct, 50.0, texture_hi_pct, highlight_pct]))
+    unclipped = ratio.min(axis=-1) > clip_floor
+    if np.count_nonzero(unclipped) >= density_luma.size // 20:
+        sample, sample_weights = density_luma[unclipped], weights[unclipped]
+    else:
+        sample, sample_weights = density_luma.ravel(), weights.ravel()
+
+    lo, p_lo, median, p_hi, hi = (float(v) for v in _weighted_percentile(
+        sample, sample_weights, [shadow_pct, texture_lo_pct, 50.0, texture_hi_pct, highlight_pct]))
 
     pivot = DENSITY_RANGE / 2.0
     span = max(hi - lo, EPS)
