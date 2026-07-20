@@ -59,7 +59,7 @@ class PhotoItem:
         self.aspect_ratio = None
         self.rotation_90 = 0
         self.straighten_angle = 0.0
-        self.auto_baseline = (0.0, 1.0, 1.0)
+        self.auto_baseline = (0.0, 1.0, 1.0, 1.0)
         # True once settings have been restored from (or saved to) this
         # photo's sidecar file - tells _ensure_photo_loaded to keep the
         # restored base_color/exposure/contrast/gamma instead of
@@ -760,11 +760,12 @@ class NegConvertApp(QMainWindow):
         item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
         if not item.has_saved_settings:
             item.params.base_color = processor.estimate_base_color(item.preview_arr)
-        exposure, contrast, gamma = processor.auto_levels(
+        exposure, contrast, gamma, saturation = processor.auto_density_grade(
             item.preview_arr, item.params.base_color, item.is_linear)
         if not item.has_saved_settings:
-            item.params.exposure, item.params.contrast, item.params.gamma = exposure, contrast, gamma
-        item.auto_baseline = (exposure, contrast, gamma)
+            item.params.exposure, item.params.contrast = exposure, contrast
+            item.params.gamma, item.params.saturation = gamma, saturation
+        item.auto_baseline = (exposure, contrast, gamma, saturation)
         item.loaded = True
         return True
 
@@ -785,10 +786,11 @@ class NegConvertApp(QMainWindow):
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)
         self.shift_b_s.set(self.params.shift_b)
-        auto_exposure, auto_contrast, auto_gamma = item.auto_baseline
+        auto_exposure, auto_contrast, auto_gamma, auto_saturation = item.auto_baseline
         self.exposure_s.set_default(auto_exposure)
         self.contrast_s.set_default(auto_contrast)
         self.gamma_s.set_default(auto_gamma)
+        self.saturation_s.set_default(auto_saturation)
         self._update_base_swatch()
         label = next((lbl for lbl, ratio in crop.ASPECT_PRESETS if ratio == self.aspect_ratio),
                      crop.ASPECT_PRESETS[0][0])
@@ -977,7 +979,7 @@ class NegConvertApp(QMainWindow):
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)
         self.shift_b_s.set(self.params.shift_b)
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
     def auto_base(self):
         if self.preview_arr is None:
@@ -993,7 +995,7 @@ class NegConvertApp(QMainWindow):
             return
         self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
     def _on_mode_change(self, index):
         mode = processor.FILM_MODES[index]
@@ -1008,14 +1010,14 @@ class NegConvertApp(QMainWindow):
             self.params.base_color = processor.estimate_base_color(self.preview_arr)
         self._update_base_swatch()
         self._update_mode_ui(mode)
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
     def _update_mode_ui(self, mode):
         # B&W collapses to neutral gray regardless of the Red/Green/Blue
         # sliders (see processor.convert_linear), so hide them rather than
         # leave controls that have no visible effect. The film-base sample
         # is equally moot: a B&W scan has R==G==B everywhere, so resampling
-        # it is just a constant density shift that _apply_auto_levels()
+        # it is just a constant density shift that _apply_auto_density_grade()
         # (run right after every sample) exactly cancels back out via its
         # own exposure term - the pipette would visibly do nothing.
         show_color = mode != "B&W"
@@ -1025,24 +1027,27 @@ class NegConvertApp(QMainWindow):
             self._set_pipette_active(False)
         self.base_hint_lbl.setText(_film_base_hint(mode))
 
-    def _apply_auto_levels(self):
+    def _apply_auto_density_grade(self):
         if self.preview_arr is None:
             self.render_preview()
             return
-        exposure, contrast, gamma = processor.auto_levels(
+        exposure, contrast, gamma, saturation = processor.auto_density_grade(
             self.preview_arr, self.params.base_color, self.is_linear,
             positive=self.params.mode == "E-6")
         self.params.exposure = exposure
         self.params.contrast = contrast
         self.params.gamma = gamma
+        self.params.saturation = saturation
         self.exposure_s.set(exposure)
         self.contrast_s.set(contrast)
         self.gamma_s.set(gamma)
+        self.saturation_s.set(saturation)
         self.exposure_s.set_default(exposure)
         self.contrast_s.set_default(contrast)
         self.gamma_s.set_default(gamma)
+        self.saturation_s.set_default(saturation)
         if 0 <= self.current_photo_index < len(self.photos):
-            self.photos[self.current_photo_index].auto_baseline = (exposure, contrast, gamma)
+            self.photos[self.current_photo_index].auto_baseline = (exposure, contrast, gamma, saturation)
         self._schedule_autosave()
         self.render_preview()
 
@@ -1414,7 +1419,7 @@ class NegConvertApp(QMainWindow):
             return
         self.params.base_color = processor.sample_base_color(self._sample_arr, img_x, img_y)
         self._update_base_swatch()
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
 
 def main():

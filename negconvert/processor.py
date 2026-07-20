@@ -72,6 +72,17 @@ _FLIP_TO_TRANSPOSE = {0: None, 3: Image.ROTATE_180, 5: Image.ROTATE_90, 6: Image
 # for C-41 stocks; Exposure/Contrast compensate for stock-to-stock variance.
 DENSITY_RANGE = 3.32
 
+# Auto Density / Auto Grade calibration, ported from NegPy's per-frame
+# metering (docs/PIPELINE.md, "Automatic helpers" - NegPy is GPL-3, see
+# auto_density_grade() below for how the two constants translate into this
+# module's stops/density model instead of NegPy's own normalized domain).
+ANCHOR_METER_STRENGTH = 0.2   # how far Exposure pulls the metered median toward mid-gray (0=none, 1=full correction)
+ANCHOR_METER_BAND = 0.12      # that pull's cap, as a fraction of DENSITY_RANGE - keeps a deliberately low/high-key frame from being flattened to neutral
+GRADE_NOMINAL_RATIO = 2.0     # DENSITY_RANGE / (P90-P10) for a "textbook normal" tonal histogram - the ~0.5-99.5th vs ~10-90th percentile span ratio of a roughly Gaussian distribution (z-score ratio 5.15/2.56 ~= 2.0), not tied to any particular exposure/contrast calibration. Recompute this if texture_lo_pct/texture_hi_pct below ever change.
+GRADE_STRENGTH = 0.5          # 0 = same Contrast on every frame, 1 = every frame's textural range fully normalized to that statistical norm
+SATURATION_BOOST_STRENGTH = 0.35  # fraction of a "full" contrast-coupled saturation boost auto_density_grade suggests - see its docstring
+SATURATION_BOOST_MAX = 1.6        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
+
 # Rec. 709 luma weights, used to hold brightness fixed while scaling
 # chroma for the Saturation control.
 LUMA_WEIGHTS = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -294,45 +305,89 @@ def estimate_base_color(arr: np.ndarray) -> tuple:
     return tuple(float(v) for v in np.median(band, axis=0))
 
 
-def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
-                 shadow_pct: float = 0.5, highlight_pct: float = 99.5,
-                 clip_floor: float = 0.01, mid_target: float = 0.214,
-                 positive: bool = False) -> tuple:
-    """Suggest (exposure, contrast, gamma) that map this image's *own*
-    density histogram onto the output range: black point and white point
-    from the shadow/highlight percentiles, and a gamma curve that repositions
-    the *median* onto a sensible midtone.
+def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
+                        shadow_pct: float = 0.5, highlight_pct: float = 99.5,
+                        texture_lo_pct: float = 10.0, texture_hi_pct: float = 90.0,
+                        clip_floor: float = 0.01, mid_target: float = 0.214,
+                        positive: bool = False) -> tuple:
+    """Suggest (exposure, contrast, gamma, saturation) the way NegPy's Auto
+    Density / Auto Grade meter a frame, ported into this module's stops/
+    density model.
 
-    The black/white stretch alone isn't enough: a real scene's histogram is
-    rarely centered between its shadow and highlight percentiles - e.g. a
-    bright beach/sky scene has most of its pixels bunched up near the bright
-    end, with only sparse dark accents and sparse extreme highlights at the
-    two ends. Stretching such a skewed histogram linearly still leaves the
-    *bulk* of the image (everywhere near the median) sitting wherever that
-    linear fit happens to place it - here, ~69% of the way to white - which
-    reads as a flat, washed-out, pale image even though black and white are
-    technically both present at the sparse extremes. A gamma curve (like any
-    photo tool's "curves"/midtone slider) repositions the median without
-    touching the anchored black and white points. `mid_target` is in linear
-    light (pre-sRGB-encode), so 0.214 - not a visually "half-bright" 0.5 -
-    is the target: linear_to_srgb(0.214) ~= 0.5, the classic "18% gray card"
-    reference for a properly balanced midtone.
+    NegPy runs Auto Density/Grade *after* a separate, always-on stage that
+    stretches each frame's own black/white points to fill the working range
+    - so its per-frame metering only has to add mood-aware fine tuning on
+    top of an already-full-range image. This module has no such separate
+    stage (Exposure/Contrast/Gamma *are* the whole tonal pipeline), so a
+    literal, isolated port of just the fine-tuning step left images
+    resting at (or near) `contrast=1.0` - i.e. barely stretched at all -
+    whenever a frame's texture-percentile shape happened to look
+    statistically "normal", regardless of whether its actual measured
+    black/white points came anywhere near filling DENSITY_RANGE. That's
+    what read as flat.
+
+    So the shadow_pct-highlight_pct span (0.5-99.5 by default) still does
+    the same unconditional full-range stretch/centering the old auto-levels
+    did - that's the baseline every frame gets, punch included. NegPy's
+    contribution is layered on top as a *damped modulation* of that
+    baseline, not a replacement for it:
+
+    - Auto Density (exposure): after the baseline centers the
+      shadow_pct-highlight_pct window on mid-gray (DENSITY_RANGE / 2), the
+      median is *also* only partially pulled the rest of the way to
+      mid-gray - by ANCHOR_METER_STRENGTH, clamped to +-ANCHOR_METER_BAND
+      of DENSITY_RANGE - so a deliberately low-key or high-key negative
+      keeps its mood instead of being flattened to average brightness.
+    - Auto Grade (contrast): the baseline contrast is scaled by how the
+      frame's own textural spread (the texture_lo_pct-texture_hi_pct
+      density range, P10-P90 by default) compares to GRADE_NOMINAL_RATIO -
+      the shadow_pct-highlight_pct-to-texture spread ratio of a "textbook
+      normal" tonal histogram - damped by GRADE_STRENGTH. A flat scene
+      (texture narrower than normal) gets extra lift on top of the
+      baseline stretch; a scene that's already punchy (texture close to
+      the full span, e.g. a high-contrast silhouette) has that damped back
+      toward the baseline instead of being pushed further.
+
+    Gamma has no NegPy analog - NegPy's toe/shoulder H&D curve reshapes the
+    tone nonlinearly instead, which this module doesn't have - so it's
+    unchanged from the old auto-levels: a curves-style repositioning of the
+    median within the shadow_pct-highlight_pct window onto mid_target
+    (0.214 in scene-linear light, i.e. the classic 18%-gray reference),
+    without moving the anchored black/white points. For most real photos
+    this lands below 1.0 and is doing real contrast work - it's not a minor
+    trim, and dropping it (an earlier version of this function did) is what
+    made images read as flat despite the baseline stretch above.
+
+    Saturation gets a small suggested boost when Gamma lands below 1.0,
+    compensating for a real effect that formula doesn't otherwise produce:
+    on real film/paper, added contrast inherently pulls colors apart
+    (that's why NegPy's own per-channel H&D curves need a "Dye Mute"
+    control to tone the effect *back down*, rather than having none at
+    all). `convert_linear()`'s gamma is deliberately tone-only - hue-safe
+    but flat - so this suggests a uniform-across-tones Saturation lift
+    instead: SATURATION_BOOST_STRENGTH of a "full" boost tied to how far
+    below 1.0 Gamma landed, capped at SATURATION_BOOST_MAX. Uniform, not
+    tone-dependent, on purpose - an earlier version scaled each pixel's
+    chroma by the gamma curve's local slope, which peaks near white and so
+    amplified whatever small color cast sat in the highlights right along
+    with genuine saturation, reintroducing the very cast this function's
+    hue-safe gamma was meant to fix.
 
     `base_color` is only ever an estimate, and if it's off - notably if the
     frame has no true clear-film area to sample from - that shows up as a
-    near-constant density offset; the black/white stretch self-corrects for
+    near-constant density offset; the baseline stretch self-corrects for
     that regardless of how good the base estimate was.
 
     Fully clipped pixels (any channel at or near raw zero - e.g. a blown sky)
-    are excluded from all three statistics first: density is +-log2(ratio),
-    which shoots toward infinity as the raw value hits zero, so even a small
+    are excluded from all statistics first: density is +-log2(ratio), which
+    shoots toward infinity as the raw value hits zero, so even a small
     clipped population can hijack a percentile and distort the whole result.
 
     `positive` must match the sign `convert_linear()` will use for this
     image's mode (True for E-6 slides, False for C-41/B&W negatives) - the
     percentiles below have to be taken in the same density direction the
-    actual conversion applies, or the suggested exposure/contrast/gamma end
-    up fitting the wrong end of the histogram.
+    actual conversion applies, or the suggested exposure/contrast end up
+    fitting the wrong end of the histogram.
     """
     base = np.array(base_color, dtype=np.float32)
     lin = arr if is_linear else srgb_to_linear(arr)
@@ -346,22 +401,57 @@ def auto_levels(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
     unclipped = ratio.min(axis=-1) > clip_floor
     sample = density_luma[unclipped] if np.count_nonzero(unclipped) >= density_luma.size // 20 else density_luma
 
-    lo, median, hi = (float(v) for v in np.percentile(sample, [shadow_pct, 50.0, highlight_pct]))
+    lo, p_lo, median, p_hi, hi = (float(v) for v in np.percentile(
+        sample, [shadow_pct, texture_lo_pct, 50.0, texture_hi_pct, highlight_pct]))
+
+    pivot = DENSITY_RANGE / 2.0
     span = max(hi - lo, EPS)
+    baseline_contrast = DENSITY_RANGE / span
+    baseline_exposure = (DENSITY_RANGE - hi - lo) / 2.0
 
-    contrast = DENSITY_RANGE / span
-    exposure = (DENSITY_RANGE - hi - lo) / 2.0
+    # Auto Density: the median, *after* the baseline centering above, only
+    # partially pulled the rest of the way to mid-gray.
+    band = ANCHOR_METER_BAND * DENSITY_RANGE
+    shifted_median = median + baseline_exposure
+    pull = float(np.clip(ANCHOR_METER_STRENGTH * (shifted_median - pivot), -band, band))
+    exposure = float(np.clip(baseline_exposure - pull, -8.0, 8.0))
 
-    normalized_median = min(max((median - lo) / span, EPS), 1.0 - EPS)
+    # Auto Grade: baseline contrast scaled by a damped shape adjustment - 1.0
+    # (no adjustment) when this frame's own full-span/texture-span ratio
+    # matches GRADE_NOMINAL_RATIO, i.e. GRADE_NOMINAL_RATIO cancels out of
+    # its own coefficient, the same relationship as NegPy's
+    # `auto_grade_target (K) * auto_grade_nominal_ratio (n) == 1.0`.
+    texture_range = max(p_hi - p_lo, EPS)
+    shape_ratio = span / texture_range
+    grade_adjust = 1.0 + (GRADE_STRENGTH / GRADE_NOMINAL_RATIO) * (shape_ratio - GRADE_NOMINAL_RATIO)
+    contrast = float(np.clip(baseline_contrast * grade_adjust, 0.5, 2.5))
+
+    # Gamma: reposition the median onto mid_target, same as the old
+    # auto-levels (see docstring) - but measured after the *actual* Auto
+    # Density/Auto Grade exposure and contrast above, not the pre-damping
+    # baseline ones. Using the baseline stretch here (an earlier version of
+    # this function did) silently breaks the mid_target guarantee: gamma
+    # solves for whatever value m satisfies m ** (1/gamma) == mid_target,
+    # so it only lands the median on mid_target if m is where the median
+    # *actually* falls pre-gamma - and once Auto Density/Grade pull exposure
+    # and contrast away from the naive full-window stretch, that's no
+    # longer the same thing whenever the median doesn't already sit dead
+    # center in [lo, hi] (i.e. most real, non-flat photos).
+    density_median = (median + exposure - pivot) * contrast + pivot
+    normalized_median = min(max(density_median / DENSITY_RANGE, EPS), 1.0 - EPS)
     if abs(normalized_median - mid_target) < EPS:
         gamma = 1.0
     else:
         gamma = float(np.log(normalized_median) / np.log(mid_target))
-
-    exposure = float(np.clip(exposure, -8.0, 8.0))
-    contrast = float(np.clip(contrast, 0.5, 2.5))
     gamma = float(np.clip(gamma, 0.3, 2.5))
-    return exposure, contrast, gamma
+
+    # Saturation: a uniform-across-tones compensation for gamma's
+    # tone-only, hue-safe curve not otherwise reproducing added contrast's
+    # natural saturation boost - see docstring.
+    saturation = 1.0 + SATURATION_BOOST_STRENGTH * max(0.0, (1.0 / gamma) - 1.0)
+    saturation = float(np.clip(saturation, 1.0, SATURATION_BOOST_MAX))
+
+    return exposure, contrast, gamma, saturation
 
 
 def sample_base_color(arr: np.ndarray, x: int, y: int, radius: int = 4) -> tuple:
@@ -450,7 +540,26 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
         density = density + params.highlight_density * highlight_weight
 
     output_linear = np.clip(density / DENSITY_RANGE, 0.0, 1.0)
-    output_linear = np.power(output_linear, 1.0 / max(params.gamma, EPS))
+    if params.gamma != 1.0:
+        # Apply the gamma curve to luma, then rescale each pixel's RGB to
+        # match - preserves hue and (HSV-style, ratio) saturation exactly.
+        # The old per-channel power curve (output_linear ** (1/gamma))
+        # doesn't: raising each channel independently stretches the ratio
+        # between them apart whenever they differ, so whichever channel
+        # already read highest (e.g. blue in a cool or sky-heavy scene) got
+        # pushed disproportionately further from the others - amplifying
+        # any residual color cast, worst exactly in near-neutral highlights
+        # where a cast reads most visibly. A per-pixel chroma boost tied to
+        # the curve's local slope (tried here previously) has the same
+        # problem from the other direction: slope peaks near white, so it
+        # amplifies whatever small cast sits in the highlights too. Kept
+        # deliberately dumb/tone-only here; auto_density_grade's Saturation
+        # suggestion (see there) is the one place a deliberate, uniform-
+        # across-tones boost gets added back in.
+        luma = np.dot(output_linear, LUMA_WEIGHTS)
+        target_luma = np.power(np.clip(luma, EPS, 1.0), 1.0 / max(params.gamma, EPS))
+        scale = np.where(luma > EPS, target_luma / np.maximum(luma, EPS), 1.0)
+        output_linear = np.clip(output_linear * scale[..., None], 0.0, 1.0)
 
     if params.mode == "B&W":
         # Collapse to true neutral gray - not just desaturated - regardless
