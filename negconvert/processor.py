@@ -283,26 +283,47 @@ def rotate_arbitrary(arr: np.ndarray, angle_degrees: float) -> np.ndarray:
                            order=1, mode="constant", cval=0.0).astype(arr.dtype)
 
 
-def estimate_base_color(arr: np.ndarray) -> tuple:
-    """Guess the film base color from the brightest (least dense) region.
+def estimate_base_color(arr: np.ndarray, is_linear: bool = False) -> tuple:
+    """Guess the film base (orange mask) color straight from this frame's own
+    statistics - no strip of unexposed clear film/sprocket-hole border needed
+    anywhere in the scan.
 
-    Picks pixels by overall luma rather than per-channel percentiles, so the
-    three channel values come from the *same* physical spot instead of
-    whichever pixels happen to be brightest in each channel independently
-    (which can be different spots entirely - e.g. a blue sky highlight vs. a
-    hot pixel - producing a nonsense, uncorrelated "base color"). The top
-    sliver of the brightest pixels is excluded too, since that is usually
-    sensor noise/clipping rather than the clear film itself, and the median
-    (not mean/max) of what is left resists remaining outliers.
+    An earlier version picked one bright spot by overall luma and used its
+    per-channel color directly - which only produces a meaningful "film base"
+    reading if that spot actually *is* clear film. Crop the scan tight to just
+    the image (no border) and it instead measures whatever happens to be
+    brightest in-frame - a sky, a highlight, a white shirt - giving a
+    plausible-looking but wrong base color and a visible cast in the result.
+
+    This measures each channel *independently* instead: its own near-clear
+    (low-density/high-brightness) percentile band, wherever in the frame that
+    happens to fall - not tied to the other channels' bright spots. That's
+    sound because the orange mask is a physical dye layer sitting under every
+    pixel equally, so any sufficiently bright patch of a channel - regardless
+    of what scene content it belongs to - reveals that channel's own mask
+    bias. Recentering all three channels' floors onto their shared median
+    then isolates just the *relative* difference between channels (the
+    mask's actual color) from however bright the frame is overall - which is
+    the only part that's a color cast; a shift shared equally by all three
+    channels is just overall exposure, which auto_density_grade's own
+    black/white percentile stretch corrects for regardless (see its
+    docstring). This is the same per-channel-percentile-then-recenter trick
+    NegPy's own border-free auto exposure analysis uses.
     """
-    flat = arr.reshape(-1, 3)
-    luma = flat.mean(axis=1)
-    lo = np.percentile(luma, 97.0)
-    hi = np.percentile(luma, 99.9)
-    band = flat[(luma >= lo) & (luma <= hi)]
-    if band.size == 0:
-        band = flat[luma >= lo] if np.any(luma >= lo) else flat
-    return tuple(float(v) for v in np.median(band, axis=0))
+    lin = arr if is_linear else srgb_to_linear(arr)
+    density = -np.log2(np.clip(lin, EPS, None))
+
+    floors = []
+    for ch in range(3):
+        d = density[..., ch]
+        lo, hi = np.percentile(d, [0.1, 3.0])  # near-clear band: this channel's own brightest ~3%
+        band = d[(d >= lo) & (d <= hi)]
+        floors.append(float(np.median(band)) if band.size else float(np.percentile(d, 0.5)))
+
+    cast = [f - float(np.median(floors)) for f in floors]
+    base_lin = np.array([2.0 ** -c for c in cast], dtype=np.float32)
+    base = base_lin if is_linear else linear_to_srgb(base_lin)
+    return tuple(float(v) for v in base)
 
 
 def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = False,

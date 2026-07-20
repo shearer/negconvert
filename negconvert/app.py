@@ -759,7 +759,7 @@ class NegConvertApp(QMainWindow):
             return False
         item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
         if not item.has_saved_settings:
-            item.params.base_color = processor.estimate_base_color(item.preview_arr)
+            item.params.base_color = processor.estimate_base_color(item.preview_arr, item.is_linear)
         exposure, contrast, gamma, saturation = processor.auto_density_grade(
             item.preview_arr, item.params.base_color, item.is_linear)
         if not item.has_saved_settings:
@@ -993,7 +993,7 @@ class NegConvertApp(QMainWindow):
             self.status_lbl.setText(
                 "Auto Base Color has no effect on B&W scans - there's no color cast to correct.")
             return
-        self.params.base_color = processor.estimate_base_color(self.preview_arr)
+        self.params.base_color = processor.estimate_base_color(self.preview_arr, self.is_linear)
         self._update_base_swatch()
         self._apply_auto_density_grade()
 
@@ -1007,7 +1007,7 @@ class NegConvertApp(QMainWindow):
             # neutral reference rather than whatever was last sampled.
             self.params.base_color = (1.0, 1.0, 1.0)
         elif self.preview_arr is not None:
-            self.params.base_color = processor.estimate_base_color(self.preview_arr)
+            self.params.base_color = processor.estimate_base_color(self.preview_arr, self.is_linear)
         self._update_base_swatch()
         self._update_mode_ui(mode)
         self._apply_auto_density_grade()
