@@ -38,7 +38,12 @@ Use the toolbar at the top of the window:
 
 Supported formats: JPEG, PNG, TIFF, BMP, and scanner/camera RAW files (DNG, CR2/CR3, NEF/NRW, ARW/SRF/SR2, RAF, ORF, RW2, PEF, RAW/RWL, 3FR).
 
-When an image loads, NegConvert automatically estimates the film base color (for C-41/E-6) and computes a starting exposure/contrast/gamma so the preview looks reasonable immediately — you don't have to set everything from a blank slate.
+When an image loads, NegConvert automatically estimates the film base color (for C-41/E-6) and computes a starting exposure/contrast/gamma/saturation so the preview looks reasonable immediately — you don't have to set everything from a blank slate. This first pass is measured from the raw, uncropped scan though, so treat it as a rough placeholder rather than the real starting point: crop to the frame on the **Crop** tab and click **Apply Crop** to get NegConvert's actual initial conversion (see Typical workflow below).
+
+This automatic pass is adapted from NegPy's "Auto Density / Auto Grade" per-frame metering, ported into NegConvert's own stops/density model. Two things fall out of that:
+
+- **Center-weighted metering** — like an in-camera light meter, the reading is weighted toward the middle of the frame and tapers off toward the edges, so a large sky, ceiling, or bright wall near the border doesn't drag exposure/contrast off what the actual subject needs.
+- **Mood-preserving, not mood-flattening** — a deliberately low-key or high-key frame is only partially pulled toward an average brightness/contrast, not forced onto one fixed target every time, so intentionally dark or bright shots keep more of their character.
 
 ## The main window
 
@@ -51,13 +56,13 @@ When an image loads, NegConvert automatically estimates the film base color (for
 ## Typical workflow
 
 1. **Open Folder…** to load a whole roll, or **Open Negative…** for a single scan.
-2. Straighten and crop on the **Crop** tab first if needed (see note below on why this comes before fine-tuning).
-3. On the **Colors** tab, confirm the **Film Type** and sample the **Film Base** if the automatic guess looks off.
+2. Straighten and crop on the **Crop** tab, then click **Apply Crop** — this does the *initial* conversion (see note below on why this comes before anything else).
+3. On the **Colors** tab, confirm the **Film Type** and sample the **Film Base** only if the result still looks off.
 4. Fine-tune **Color Balance** and exposure/contrast on the **Adjustments** tab.
 5. Pick a format and color profile on the **Export** tab and save — either one image at a time, or several at once via batch export.
 6. Use the filmstrip to move to the next frame; each frame keeps its own adjustments.
 
-Crop before fine-tuning color/exposure, not after: **Apply Crop** re-measures the film base color and the auto exposure/contrast/gamma/saturation from just the cropped region (see the Crop tab section below), overwriting whatever was on those controls at the time - the same way switching Film Type or resampling the base does. Cropping *after* dialing in Adjustments by hand would silently discard that manual work.
+**Crop first, then Apply Crop, every time — this is the best way to get a good initial conversion.** The moment an image loads, NegConvert only has the raw, uncropped scan to measure from, so its first-guess film base/exposure/contrast/gamma/saturation is often thrown off by a scanner border, sprocket holes, or a neighboring frame bleeding into the edge of the scan. **Apply Crop** re-measures the film base color and the auto exposure/contrast/gamma/saturation from just the cropped region (see the Crop tab section below), overwriting whatever was on those controls at the time — the same way switching Film Type or resampling the base does. So rather than judging or adjusting the image straight off Open, crop it down to just the frame first and click Apply Crop; treat *that* result as the real starting point, and only reach for manual Film Base sampling or the Adjustments tab if it still isn't right. Cropping *after* dialing in Adjustments by hand would silently discard that manual work, so don't reorder these steps.
 
 ## Colors tab
 
@@ -73,7 +78,7 @@ Crop before fine-tuning color/exposure, not after: **Apply Crop** re-measures th
    - **E-6**: click a clear, unexposed edge of the slide.
 3. The swatch and RGB readout update, and exposure/contrast/gamma are automatically recalculated for the new base color.
 
-The **Auto Base Color** toolbar button does the same sampling automatically instead of a manual click, and also recalculates auto exposure/contrast/gamma/saturation for the new base color — useful as a first pass or to reset after a bad manual sample. It measures only the current crop, not the whole scan (so a scanner border or sprocket holes outside the crop don't throw it off — see the Crop tab section). It's a no-op on B&W scans (there's no color cast to correct), and the status bar will say so if you click it in that mode.
+The **Auto Base Color** toolbar button does the same sampling automatically instead of a manual click, and also recalculates auto exposure/contrast/gamma/saturation for the new base color — useful as a first pass or to reset after a bad manual sample. It doesn't need an actual strip of unexposed film in the frame to work: it reads each color channel's own near-clear (brightest) area independently, wherever that happens to fall, and compares the three against each other — so it still produces a usable base color on a scan that's been cropped tight to just the image, with no border or sprocket holes left in it. It measures only the current crop, not the whole scan (so a scanner border or sprocket holes outside the crop don't throw it off — see the Crop tab section). It's a no-op on B&W scans (there's no color cast to correct), and the status bar will say so if you click it in that mode.
 
 ## Adjustments tab
 
@@ -94,6 +99,8 @@ All sliders can be reset individually by double-clicking them (this returns them
 The **Reset Adjustments** toolbar button zeroes out Density, Shadow/Highlight Density, Denoise, Sharpening, and the Color Balance sliders, then recomputes Exposure/Contrast/Gamma/Saturation from scratch for the current film base and crop — it's a full reset back to the automatic starting point, not to literal zero on every control (Saturation in particular lands on whatever value auto-grading suggests, not 1.0).
 
 ## Crop tab
+
+Do this tab first, on every image, before touching Colors or Adjustments — crop to the frame and click **Apply Crop** to run the actual initial conversion. This is the best-working order: it's what produces a good starting point, rather than treating crop as a cosmetic step to clean up after the fact.
 
 - **Aspect Ratio** — choose Free, or a preset (1:1 square, 3:2 / 2:3 35mm, 4:3 / 3:4 645, 16:9 / 9:16, 5:4 / 4:5 large format). Changing this reshapes the current crop box to match.
 - While this tab is open, drag directly on the image:
@@ -163,6 +170,7 @@ Sidecars travel with the image: copy or move a scan together with its `.negconve
 ## Tips
 
 - Sample the film base from an area that's truly unexposed film (a sprocket hole or frame border), not part of the photographed scene — that's what the orange-mask neutralization depends on. Sometimes the results are better when selecting an area inside the image for example a grey area.
+- Because auto exposure/contrast/gamma/saturation is center-weighted, a bright sky or wall running along the frame edge shouldn't throw off the automatic read much — but if a shot is still coming in too dark or flat, try cropping in closer to the actual subject and hitting Apply Crop to re-measure against just that region.
 - If a whole roll was scanned under consistent lighting, sampling the film base once and copying the color balance across frames (by re-sampling on each, or just leaving the same manual Red/Green/Blue offsets) usually gets you closer, faster, than re-tuning every frame from scratch.
 - Straightening automatically tightens the crop to avoid empty corners — if you need the absolute maximum frame area, straighten first, then manually drag the crop back out before applying.
 - Use Linear DNG export if you want to keep grading the image in another raw-capable tool later; use TIFF/PNG/JPEG for a finished, ready-to-view positive.
