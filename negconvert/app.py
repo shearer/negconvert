@@ -59,7 +59,7 @@ class PhotoItem:
         self.aspect_ratio = None
         self.rotation_90 = 0
         self.straighten_angle = 0.0
-        self.auto_baseline = (0.0, 1.0, 1.0)
+        self.auto_baseline = (0.0, 1.0, 1.0, 1.0)
         # True once settings have been restored from (or saved to) this
         # photo's sidecar file - tells _ensure_photo_loaded to keep the
         # restored base_color/exposure/contrast/gamma instead of
@@ -247,13 +247,17 @@ def _separator(parent):
 
 def _film_base_hint(mode):
     if mode == "E-6":
-        return ("Click the pipette, then click a clear\n"
+        return ("Crop first: Apply Crop to do the initial conversion\n"
+                 "To reestimate, click the pipette, then click a clear\n"
                  "(unexposed) edge of the slide to correct\n"
-                 "for any color cast.")
-    return ("Click the pipette, then click anywhere on\n"
+                 "for any color cast."
+                 )
+    return ("Crop first: Apply Crop to do the initial conversion\n"
+             "To reestimate, click the pipette, then click anywhere on\n"
              "the image to sample the orange mask from\n"
              "unexposed film.\n"
-             "Often a grey area inside the image works well.")
+             "Often a grey area inside the image works well.\n"
+             )
 
 
 class NegConvertApp(QMainWindow):
@@ -433,7 +437,7 @@ class NegConvertApp(QMainWindow):
             ("highlight_density_s","Highlight Density", -2.0,  2.0,  self.params.highlight_density,0.0),
             ("contrast_s",        "Contrast",            0.5,  2.5,  self.params.contrast,          1.0),
             ("gamma_s",           "Gamma",               0.3,  2.5,  self.params.gamma,             1.0),
-            ("saturation_s",      "Saturation",          0.0,  2.0,  self.params.saturation,        1.0),
+            ("saturation_s",      "Saturation",          0.0,  3.0,  self.params.saturation,        1.0),
             ("denoise_s",         "Denoise",             0.0,  2.0,  self.params.denoise,           0.0),
             ("sharpen_s",         "Sharpening",          0.0,  2.0,  self.params.sharpen,           0.0),
         ]
@@ -758,13 +762,16 @@ class NegConvertApp(QMainWindow):
                                  f"{os.path.basename(item.path)}: {exc}")
             return False
         item.preview_arr = processor.downscale(item.full_arr, PREVIEW_MAX_DIM, item.is_linear)
+        analysis_arr = self._analysis_region(
+            item.preview_arr, item.crop_rect, item.rotation_90, item.straighten_angle)
         if not item.has_saved_settings:
-            item.params.base_color = processor.estimate_base_color(item.preview_arr)
-        exposure, contrast, gamma = processor.auto_levels(
-            item.preview_arr, item.params.base_color, item.is_linear)
+            item.params.base_color = processor.estimate_base_color(analysis_arr, item.is_linear)
+        exposure, contrast, gamma, saturation = processor.auto_density_grade(
+            analysis_arr, item.params.base_color, item.is_linear)
         if not item.has_saved_settings:
-            item.params.exposure, item.params.contrast, item.params.gamma = exposure, contrast, gamma
-        item.auto_baseline = (exposure, contrast, gamma)
+            item.params.exposure, item.params.contrast = exposure, contrast
+            item.params.gamma, item.params.saturation = gamma, saturation
+        item.auto_baseline = (exposure, contrast, gamma, saturation)
         item.loaded = True
         return True
 
@@ -785,10 +792,11 @@ class NegConvertApp(QMainWindow):
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)
         self.shift_b_s.set(self.params.shift_b)
-        auto_exposure, auto_contrast, auto_gamma = item.auto_baseline
+        auto_exposure, auto_contrast, auto_gamma, auto_saturation = item.auto_baseline
         self.exposure_s.set_default(auto_exposure)
         self.contrast_s.set_default(auto_contrast)
         self.gamma_s.set_default(auto_gamma)
+        self.saturation_s.set_default(auto_saturation)
         self._update_base_swatch()
         label = next((lbl for lbl, ratio in crop.ASPECT_PRESETS if ratio == self.aspect_ratio),
                      crop.ASPECT_PRESETS[0][0])
@@ -977,7 +985,7 @@ class NegConvertApp(QMainWindow):
         self.shift_r_s.set(self.params.shift_r)
         self.shift_g_s.set(self.params.shift_g)
         self.shift_b_s.set(self.params.shift_b)
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
     def auto_base(self):
         if self.preview_arr is None:
@@ -991,9 +999,9 @@ class NegConvertApp(QMainWindow):
             self.status_lbl.setText(
                 "Auto Base Color has no effect on B&W scans - there's no color cast to correct.")
             return
-        self.params.base_color = processor.estimate_base_color(self.preview_arr)
+        self.params.base_color = processor.estimate_base_color(self._analysis_arr(), self.is_linear)
         self._update_base_swatch()
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
     def _on_mode_change(self, index):
         mode = processor.FILM_MODES[index]
@@ -1005,17 +1013,17 @@ class NegConvertApp(QMainWindow):
             # neutral reference rather than whatever was last sampled.
             self.params.base_color = (1.0, 1.0, 1.0)
         elif self.preview_arr is not None:
-            self.params.base_color = processor.estimate_base_color(self.preview_arr)
+            self.params.base_color = processor.estimate_base_color(self._analysis_arr(), self.is_linear)
         self._update_base_swatch()
         self._update_mode_ui(mode)
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
     def _update_mode_ui(self, mode):
         # B&W collapses to neutral gray regardless of the Red/Green/Blue
         # sliders (see processor.convert_linear), so hide them rather than
         # leave controls that have no visible effect. The film-base sample
         # is equally moot: a B&W scan has R==G==B everywhere, so resampling
-        # it is just a constant density shift that _apply_auto_levels()
+        # it is just a constant density shift that _apply_auto_density_grade()
         # (run right after every sample) exactly cancels back out via its
         # own exposure term - the pipette would visibly do nothing.
         show_color = mode != "B&W"
@@ -1025,24 +1033,27 @@ class NegConvertApp(QMainWindow):
             self._set_pipette_active(False)
         self.base_hint_lbl.setText(_film_base_hint(mode))
 
-    def _apply_auto_levels(self):
+    def _apply_auto_density_grade(self):
         if self.preview_arr is None:
             self.render_preview()
             return
-        exposure, contrast, gamma = processor.auto_levels(
-            self.preview_arr, self.params.base_color, self.is_linear,
+        exposure, contrast, gamma, saturation = processor.auto_density_grade(
+            self._analysis_arr(), self.params.base_color, self.is_linear,
             positive=self.params.mode == "E-6")
         self.params.exposure = exposure
         self.params.contrast = contrast
         self.params.gamma = gamma
+        self.params.saturation = saturation
         self.exposure_s.set(exposure)
         self.contrast_s.set(contrast)
         self.gamma_s.set(gamma)
+        self.saturation_s.set(saturation)
         self.exposure_s.set_default(exposure)
         self.contrast_s.set_default(contrast)
         self.gamma_s.set_default(gamma)
+        self.saturation_s.set_default(saturation)
         if 0 <= self.current_photo_index < len(self.photos):
-            self.photos[self.current_photo_index].auto_baseline = (exposure, contrast, gamma)
+            self.photos[self.current_photo_index].auto_baseline = (exposure, contrast, gamma, saturation)
         self._schedule_autosave()
         self.render_preview()
 
@@ -1179,7 +1190,18 @@ class NegConvertApp(QMainWindow):
         if self.full_arr is None:
             return
         self.crop_mode = False
-        self.render_preview()
+        # Re-measure Auto Base Color / Auto Density-Grade against just the
+        # cropped region - a scanner border, sprocket holes, or a
+        # neighboring frame the crop just excluded would otherwise keep
+        # skewing those statistics even though the export no longer
+        # includes them. Same "structural change refreshes the auto
+        # baseline" convention as a mode switch or a fresh base-color
+        # sample (see _on_mode_change/auto_base), so it overwrites the
+        # current Exposure/Contrast/Gamma/Saturation the same way those do.
+        if self.params.mode != "B&W":
+            self.params.base_color = processor.estimate_base_color(self._analysis_arr(), self.is_linear)
+            self._update_base_swatch()
+        self._apply_auto_density_grade()
 
     def redo_crop(self):
         if self.full_arr is None:
@@ -1240,6 +1262,22 @@ class NegConvertApp(QMainWindow):
 
     def _apply_rotation(self, arr):
         return self._apply_rotation_to(arr, self.rotation_90, self.straighten_angle)
+
+    @staticmethod
+    def _analysis_region(arr, crop_rect, rotation_90, straighten_angle):
+        """The region Auto Base Color / Auto Density-Grade should be measured
+        from: rotated/straightened and cropped the same way the final export
+        will be, so a scanner border, sprocket holes, or a neighboring frame
+        that the crop excludes don't skew the automatic statistics - they
+        measure what the user actually kept, not the whole scan.
+        """
+        working = NegConvertApp._apply_rotation_to(arr, rotation_90, straighten_angle)
+        h, w = working.shape[:2]
+        x0, y0, x1, y1 = crop.crop_pixel_box((h, w), crop_rect)
+        return working[y0:y1, x0:x1]
+
+    def _analysis_arr(self):
+        return self._analysis_region(self.preview_arr, self.crop_rect, self.rotation_90, self.straighten_angle)
 
     @staticmethod
     def _apply_rotation_to(arr, rotation_90, straighten_angle):
@@ -1414,7 +1452,7 @@ class NegConvertApp(QMainWindow):
             return
         self.params.base_color = processor.sample_base_color(self._sample_arr, img_x, img_y)
         self._update_base_swatch()
-        self._apply_auto_levels()
+        self._apply_auto_density_grade()
 
 
 def main():

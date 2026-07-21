@@ -7,7 +7,8 @@ NegConvert is a desktop app for converting scanned film negatives and slides int
 It supports color negative (C-41), black & white negative, and slide/reversal (E-6) film, reading straight from JPEG/PNG/TIFF scans or from scanner and camera RAW files (DNG, CR2/CR3, NEF, ARW, RAF, ORF, RW2, PEF, RAW/RWL, 3FR).
 
 **Features**
-- Automatic or manual film-base sampling to neutralize the orange mask on color negatives
+- Automatic or manual film-base sampling to neutralize the orange mask on color negatives — the automatic estimate works channel-by-channel and doesn't need an unexposed film border in the scan
+- Automatic exposure/contrast/gamma/saturation grading adapted from NegPy's center-weighted "Auto Density / Auto Grade" per-frame metering, so a bright sky or wall near the edge doesn't skew the reading and a deliberately low-key or high-key frame keeps its mood instead of being flattened to average
 - Per-channel (RGB) color balance, exposure, density, shadow/highlight density, contrast, gamma, saturation, denoise, and sharpening controls
 - Crop with arbitrary-angle straighten
 - Export to TIFF, PNG, JPEG, or Linear DNG, with sRGB, Adobe RGB, or ProPhoto RGB color profiles
