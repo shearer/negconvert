@@ -1,5 +1,21 @@
 # Release Notes
 
+## v2026.07.007 — 2026-07-21
+
+### Changed
+
+- **Automatic conversion reworked, adapted from NegPy's "Auto Density / Auto Grade" per-frame metering.** Exposure, Contrast, Gamma, and now Saturation are all computed together as one auto-graded starting point, instead of Saturation being left at a flat 1.0:
+  - Metering is now **center-weighted**, like an in-camera light meter, so a large sky, ceiling, or bright wall near the frame edge no longer skews the reading away from the actual subject.
+  - The auto result is **mood-preserving**: a deliberately low-key or high-key frame is only partially pulled toward average brightness/contrast rather than flattened to one fixed target every time.
+  - **Auto Base Color** no longer needs an actual strip of unexposed film in the frame — it now reads each color channel's own near-clear area independently and compares them, so it still works on scans cropped tight to just the image.
+  - Gamma is now applied as a hue-safe curve on luma (rescaling each pixel's RGB to match) instead of a per-channel power curve, which used to amplify any residual color cast in the highlights.
+  - Saturation range extended from 0–2 to 0–3 to give headroom for the new auto-suggested value on low-Gamma frames.
+- **Crop is now the recommended first step.** Because Auto Base Color and the auto exposure/contrast/gamma/saturation grade are measured from whatever's in the current crop, cropping to the frame and clicking **Apply Crop** produces a meaningfully better initial conversion than the rough estimate computed on the raw, uncropped scan at Open. See [MANUAL.md](MANUAL.md#typical-workflow) for the recommended order.
+
+### Fixed
+
+- Auto-graded images no longer come out systematically flat/washed-out or over-dark on ordinary, symmetric tonal histograms — both the black/white stretch and the Gamma repositioning are now damped rather than applied at full, uncalibrated strength.
+
 ## v2026.07.006 — 2026-07-16
 
 ### Added
