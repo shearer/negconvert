@@ -247,17 +247,17 @@ def _separator(parent):
 
 def _film_base_hint(mode):
     if mode == "E-6":
-        return ("Click the pipette, then click a clear\n"
+        return ("Crop first: Apply Crop to do the initial conversion\n"
+                 "To reestimate, click the pipette, then click a clear\n"
                  "(unexposed) edge of the slide to correct\n"
-                 "for any color cast.\n"
-                 "Crop first: Apply Crop re-samples this\n"
-                 "automatically and will overwrite a manual pick.")
-    return ("Click the pipette, then click anywhere on\n"
+                 "for any color cast."
+                 )
+    return ("Crop first: Apply Crop to do the initial conversion\n"
+             "To reestimate, click the pipette, then click anywhere on\n"
              "the image to sample the orange mask from\n"
              "unexposed film.\n"
              "Often a grey area inside the image works well.\n"
-             "Crop first: Apply Crop re-samples this\n"
-             "automatically and will overwrite a manual pick.")
+             )
 
 
 class NegConvertApp(QMainWindow):
