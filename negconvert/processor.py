@@ -493,7 +493,29 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
 
     weights = _center_weight(*density_luma.shape)
 
+    # A clipped pixel needs excluding from the end where *this* mode's
+    # blown highlights land - not always the low end of `ratio`. A
+    # negative's blown highlight drives the raw scan toward zero (more
+    # scene exposure -> more dye density -> less transmission), which is
+    # what the `ratio`-based floor check below already guards against, and
+    # that check is base_color-scale-invariant (ratio -> 0 iff lin -> 0,
+    # for any positive base). E-6 is the opposite: it's already a positive,
+    # so a blown highlight (sky, sun, a specular reflection - common, since
+    # slide stock has much less exposure latitude than negative stock)
+    # drives the raw scan toward *its own* ceiling instead. That can't be
+    # caught the same way on `ratio`'s high end, though: ratio = lin/base,
+    # and base is typically sampled close to 1.0 for E-6 (see
+    # _on_mode_change), so a genuinely clipped pixel (lin ~= 1) only gives
+    # ratio ~= 1/base ~= 1 - nowhere near large enough to stand out as an
+    # outlier in `ratio` terms. What's actually mode- and base-invariant
+    # for "the raw scan itself hit its recorded ceiling" is checking `lin`
+    # directly, not `ratio`. Left unexcluded, that population sails past
+    # the floor-only filter below and hijacks the highlight_pct/
+    # texture_hi_pct percentiles exactly the way this function's docstring
+    # already warns a clipped population can.
     unclipped = ratio.min(axis=-1) > clip_floor
+    if positive:
+        unclipped &= lin.max(axis=-1) < 1.0 - clip_floor
     if np.count_nonzero(unclipped) >= density_luma.size // 20:
         sample, sample_weights = density_luma[unclipped], weights[unclipped]
     else:
