@@ -1,5 +1,12 @@
 # Release Notes
 
+## v2026.07.008 — 2026-07-24
+
+### Fixed
+
+- **Auto Base Color no longer casts converted C-41 scans green/cyan.** For a real orange-masked base, the red channel's estimate routinely came out above 1.0 before being gamma-encoded back to sRGB, which silently clipped it to 1.0 and threw away exactly the red-vs-green/blue difference the estimate exists to measure — biasing the recovered base toward neutral and leaving a green/cyan tint in the converted positive. The estimate is now rescaled to a 1.0 ceiling first, preserving the relative cast between channels. This only affected regular JPEG/TIFF/PNG scans; raw/DNG loads (already linear, no sRGB round-trip) were unaffected by this particular bug.
+  - Note: Auto Base Color still can't recover an accurate result on a scan that has no genuinely near-clear (film-base or blown-highlight) content in frame at all — for those, sample a known-neutral element in the scene (e.g. pavement, a gray card) with the pipette instead.
+
 ## v2026.07.007 — 2026-07-21
 
 ### Changed
