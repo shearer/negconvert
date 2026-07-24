@@ -767,7 +767,8 @@ class NegConvertApp(QMainWindow):
         if not item.has_saved_settings:
             item.params.base_color = processor.estimate_base_color(analysis_arr, item.is_linear)
         exposure, contrast, gamma, saturation = processor.auto_density_grade(
-            analysis_arr, item.params.base_color, item.is_linear)
+            analysis_arr, item.params.base_color, item.is_linear,
+            positive=item.params.mode == "E-6")
         if not item.has_saved_settings:
             item.params.exposure, item.params.contrast = exposure, contrast
             item.params.gamma, item.params.saturation = gamma, saturation

@@ -83,6 +83,18 @@ GRADE_STRENGTH = 0.5          # 0 = same Contrast on every frame, 1 = every fram
 GAMMA_STRENGTH = 0.5          # 0 = Gamma always 1.0, 1 = the median always lands exactly on mid_target - see auto_density_grade's docstring for why this needs damping like its siblings above
 SATURATION_BOOST_STRENGTH = 1.3   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; >1.0 is a deliberate extra push past the exact physical match (real photos still read a bit flat at exactly 1.0)
 SATURATION_BOOST_MAX = 2.0        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
+# E-6-specific saturation boost, damped well below the C-41/B&W constants
+# above. The boost formula treats a low Gamma as "this frame needed added
+# contrast, and added contrast naturally pulls colors apart on real film/
+# paper too" - true for an ordinary flat negative, but not for a slide
+# that's merely high-key (a big bright sky, common in slide photography's
+# outdoor/travel subjects): there, Gamma lands low just to pull an
+# already-bright median back toward mid-gray, not because the frame needs
+# contrast restored, so the same formula has nothing physical to
+# compensate for and just oversaturates. Damped rather than dropped to 0,
+# since a genuinely flat E-6 frame still benefits from some restoration.
+SATURATION_BOOST_STRENGTH_E6 = 0.5
+SATURATION_BOOST_MAX_E6 = 1.5
 
 # Center-weighted metering for auto_density_grade's percentile stats (see
 # _center_weight docstring): radii in frame-half-heights/widths where the
@@ -581,9 +593,15 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
 
     # Saturation: a uniform-across-tones compensation for gamma's
     # tone-only, hue-safe curve not otherwise reproducing added contrast's
-    # natural saturation boost - see docstring.
-    saturation = 1.0 + SATURATION_BOOST_STRENGTH * max(0.0, (1.0 / gamma) - 1.0)
-    saturation = float(np.clip(saturation, 1.0, SATURATION_BOOST_MAX))
+    # natural saturation boost - see docstring. E-6 uses its own, more
+    # damped constants (see SATURATION_BOOST_STRENGTH_E6): a slide's low
+    # Gamma is often just pulling a naturally high-key frame back toward
+    # mid-gray, not restoring contrast, so the full C-41/B&W boost has
+    # nothing physical to compensate for there and just oversaturates.
+    boost_strength = SATURATION_BOOST_STRENGTH_E6 if positive else SATURATION_BOOST_STRENGTH
+    boost_max = SATURATION_BOOST_MAX_E6 if positive else SATURATION_BOOST_MAX
+    saturation = 1.0 + boost_strength * max(0.0, (1.0 / gamma) - 1.0)
+    saturation = float(np.clip(saturation, 1.0, boost_max))
 
     return exposure, contrast, gamma, saturation
 
