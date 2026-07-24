@@ -333,6 +333,18 @@ def estimate_base_color(arr: np.ndarray, is_linear: bool = False) -> tuple:
 
     cast = [f - float(np.median(floors)) for f in floors]
     base_lin = np.array([2.0 ** -c for c in cast], dtype=np.float32)
+    # A real orange-masked C-41 base routinely puts the red channel's cast
+    # well above 1.0 here (red is the least-absorbed channel, so its floor
+    # sits furthest below the cross-channel median that anchors 2**0 = 1).
+    # linear_to_srgb() below clips its input to [0, 1] before gamma-encoding,
+    # so left un-normalized that silently clamps red and throws away the
+    # very difference this function exists to measure - producing a
+    # red-deficient (green/cyan-tinted) base and, downstream, a matching
+    # cast in the converted positive. Rescaling to a 1.0 ceiling first keeps
+    # every channel in range without touching the *relative* cast between
+    # them; the resulting uniform brightness shift is inconsequential since
+    # auto_density_grade's own exposure stretch absorbs it regardless.
+    base_lin = base_lin / max(float(base_lin.max()), EPS)
     base = base_lin if is_linear else linear_to_srgb(base_lin)
     return tuple(float(v) for v in base)
 
