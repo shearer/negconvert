@@ -1,5 +1,12 @@
 # Release Notes
 
+## v2026.07.009 — 2026-07-29
+
+### Fixed
+
+- **E-6 no longer comes out over-bright, over-saturated, and over-contrasty.** An earlier rework folded E-6's automatic exposure/contrast/gamma/saturation suggestion into the same "Auto Density/Auto Grade" metering tuned for C-41 negatives — a slide's naturally high-key, sky-heavy compositions (and even perfectly ordinary, already well-exposed frames) read as needing a large correction, which the Saturation-boost formula then turned into an oversaturated, overbright, overcontrasty result. E-6 now uses its own, independent auto-levels again (an unconditional black/white percentile stretch plus an undamped gamma repositioning of the median, with no Saturation boost) — this project's original pre-NegPy behavior. C-41 and B&W are unaffected and still use the NegPy-based metering.
+- **E-6 no longer looks flat/undersaturated compared to its original color rendering.** The hue-safe Gamma curve introduced alongside the metering rework above (to stop C-41/B&W from amplifying color casts) also stripped out E-6's color punch: a slide's typically-below-1.0 Gamma relied on the old per-channel curve's side effect of pulling color channels apart for its saturation, and E-6 has no separate Saturation boost to compensate. E-6 now applies that original per-channel Gamma curve again; C-41 and B&W keep the hue-safe one.
+
 ## v2026.07.008 — 2026-07-24
 
 ### Fixed
