@@ -19,6 +19,7 @@ from PySide6.QtGui import (
 from . import crop
 from . import processor
 from . import theme
+from . import __version__
 from .widgets import (
     ColorSwatch, Filmstrip, Histogram, ModernSlider,
     PillButton, PipetteButton, TabBar, numpy_to_pixmap,
@@ -373,6 +374,8 @@ class NegConvertApp(QMainWindow):
         # Status bar
         self.status_lbl = QLabel("No image loaded")
         self.statusBar().addWidget(self.status_lbl)
+        version_lbl = QLabel(f"v{__version__}")
+        self.statusBar().addPermanentWidget(version_lbl)  # right-aligned, unlike addWidget above
         self.statusBar().setStyleSheet(
             f"background: {theme.PANEL_DARK}; color: {theme.TEXT_DIM}; font-size: 10px;"
         )
