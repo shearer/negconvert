@@ -83,18 +83,6 @@ GRADE_STRENGTH = 0.5          # 0 = same Contrast on every frame, 1 = every fram
 GAMMA_STRENGTH = 0.5          # 0 = Gamma always 1.0, 1 = the median always lands exactly on mid_target - see auto_density_grade's docstring for why this needs damping like its siblings above
 SATURATION_BOOST_STRENGTH = 1.3   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; >1.0 is a deliberate extra push past the exact physical match (real photos still read a bit flat at exactly 1.0)
 SATURATION_BOOST_MAX = 2.0        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
-# E-6-specific saturation boost, damped well below the C-41/B&W constants
-# above. The boost formula treats a low Gamma as "this frame needed added
-# contrast, and added contrast naturally pulls colors apart on real film/
-# paper too" - true for an ordinary flat negative, but not for a slide
-# that's merely high-key (a big bright sky, common in slide photography's
-# outdoor/travel subjects): there, Gamma lands low just to pull an
-# already-bright median back toward mid-gray, not because the frame needs
-# contrast restored, so the same formula has nothing physical to
-# compensate for and just oversaturates. Damped rather than dropped to 0,
-# since a genuinely flat E-6 frame still benefits from some restoration.
-SATURATION_BOOST_STRENGTH_E6 = 0.5
-SATURATION_BOOST_MAX_E6 = 1.5
 
 # Center-weighted metering for auto_density_grade's percentile stats (see
 # _center_weight docstring): radii in frame-half-heights/widths where the
@@ -408,6 +396,24 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
     Density / Auto Grade meter a frame, ported into this module's stops/
     density model.
 
+    E-6 (`positive=True`) does *not* go through any of this - see the
+    early return near the top of the function body. This metering below
+    was tuned against C-41 negatives: its Auto Density/Auto Grade damping
+    assumes a negative's characteristic mood/contrast, and its Saturation
+    boost assumes a low Gamma means "this frame needed contrast restored."
+    Folding E-6 into it (commit a06dee1) made a slide's naturally high-key,
+    sky-heavy compositions - and even perfectly ordinary, already
+    well-exposed frames - read as needing a large correction, which the
+    Saturation-boost formula then turned into an oversaturated, overbright,
+    overcontrasty result. E-6 instead uses this project's original,
+    pre-NegPy auto-levels (see commit 74fc0bb's `auto_levels()`): an
+    unconditional black/white percentile stretch plus an undamped gamma
+    repositioning of the median onto mid_target, with Saturation left at
+    1.0 - the same math this function used for every film mode before the
+    NegPy port.
+
+    Everything below this point describes the C-41/B&W path only.
+
     NegPy runs Auto Density/Grade *after* a separate, always-on stage that
     stretches each frame's own black/white points to fill the working range
     - so its per-frame metering only has to add mood-aware fine tuning on
@@ -503,31 +509,33 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
     else:
         density_luma = (-np.log2(ratio)).mean(axis=-1)
 
-    weights = _center_weight(*density_luma.shape)
-
-    # A clipped pixel needs excluding from the end where *this* mode's
-    # blown highlights land - not always the low end of `ratio`. A
-    # negative's blown highlight drives the raw scan toward zero (more
-    # scene exposure -> more dye density -> less transmission), which is
-    # what the `ratio`-based floor check below already guards against, and
-    # that check is base_color-scale-invariant (ratio -> 0 iff lin -> 0,
-    # for any positive base). E-6 is the opposite: it's already a positive,
-    # so a blown highlight (sky, sun, a specular reflection - common, since
-    # slide stock has much less exposure latitude than negative stock)
-    # drives the raw scan toward *its own* ceiling instead. That can't be
-    # caught the same way on `ratio`'s high end, though: ratio = lin/base,
-    # and base is typically sampled close to 1.0 for E-6 (see
-    # _on_mode_change), so a genuinely clipped pixel (lin ~= 1) only gives
-    # ratio ~= 1/base ~= 1 - nowhere near large enough to stand out as an
-    # outlier in `ratio` terms. What's actually mode- and base-invariant
-    # for "the raw scan itself hit its recorded ceiling" is checking `lin`
-    # directly, not `ratio`. Left unexcluded, that population sails past
-    # the floor-only filter below and hijacks the highlight_pct/
-    # texture_hi_pct percentiles exactly the way this function's docstring
-    # already warns a clipped population can.
+    # Fully clipped pixels (any channel at or near raw zero, e.g. a blown
+    # sky) are excluded first: density is +-log2(ratio), which shoots
+    # toward infinity as the raw value hits zero, so even a small clipped
+    # population can hijack a percentile and distort the whole result.
     unclipped = ratio.min(axis=-1) > clip_floor
+
     if positive:
-        unclipped &= lin.max(axis=-1) < 1.0 - clip_floor
+        # E-6: this project's original, pre-NegPy auto-levels (see
+        # docstring) - an unconditional black/white percentile stretch, no
+        # center-weighting, no Auto Density/Grade damping, undamped Gamma,
+        # and Saturation left at 1.0 rather than boosted.
+        sample = (density_luma[unclipped]
+                  if np.count_nonzero(unclipped) >= density_luma.size // 20
+                  else density_luma)
+        lo, median, hi = (float(v) for v in np.percentile(sample, [shadow_pct, 50.0, highlight_pct]))
+        span = max(hi - lo, EPS)
+        contrast = float(np.clip(DENSITY_RANGE / span, 0.5, 2.5))
+        exposure = float(np.clip((DENSITY_RANGE - hi - lo) / 2.0, -8.0, 8.0))
+        normalized_median = min(max((median - lo) / span, EPS), 1.0 - EPS)
+        if abs(normalized_median - mid_target) < EPS:
+            gamma = 1.0
+        else:
+            gamma = float(np.log(normalized_median) / np.log(mid_target))
+        gamma = float(np.clip(gamma, 0.3, 2.5))
+        return exposure, contrast, gamma, 1.0
+
+    weights = _center_weight(*density_luma.shape)
     if np.count_nonzero(unclipped) >= density_luma.size // 20:
         sample, sample_weights = density_luma[unclipped], weights[unclipped]
     else:
@@ -593,15 +601,10 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
 
     # Saturation: a uniform-across-tones compensation for gamma's
     # tone-only, hue-safe curve not otherwise reproducing added contrast's
-    # natural saturation boost - see docstring. E-6 uses its own, more
-    # damped constants (see SATURATION_BOOST_STRENGTH_E6): a slide's low
-    # Gamma is often just pulling a naturally high-key frame back toward
-    # mid-gray, not restoring contrast, so the full C-41/B&W boost has
-    # nothing physical to compensate for there and just oversaturates.
-    boost_strength = SATURATION_BOOST_STRENGTH_E6 if positive else SATURATION_BOOST_STRENGTH
-    boost_max = SATURATION_BOOST_MAX_E6 if positive else SATURATION_BOOST_MAX
-    saturation = 1.0 + boost_strength * max(0.0, (1.0 / gamma) - 1.0)
-    saturation = float(np.clip(saturation, 1.0, boost_max))
+    # natural saturation boost - see docstring. (E-6 never reaches here -
+    # see the early return above - and always keeps Saturation at 1.0.)
+    saturation = 1.0 + SATURATION_BOOST_STRENGTH * max(0.0, (1.0 / gamma) - 1.0)
+    saturation = float(np.clip(saturation, 1.0, SATURATION_BOOST_MAX))
 
     return exposure, contrast, gamma, saturation
 
@@ -693,25 +696,43 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
 
     output_linear = np.clip(density / DENSITY_RANGE, 0.0, 1.0)
     if params.gamma != 1.0:
-        # Apply the gamma curve to luma, then rescale each pixel's RGB to
-        # match - preserves hue and (HSV-style, ratio) saturation exactly.
-        # The old per-channel power curve (output_linear ** (1/gamma))
-        # doesn't: raising each channel independently stretches the ratio
-        # between them apart whenever they differ, so whichever channel
-        # already read highest (e.g. blue in a cool or sky-heavy scene) got
-        # pushed disproportionately further from the others - amplifying
-        # any residual color cast, worst exactly in near-neutral highlights
-        # where a cast reads most visibly. A per-pixel chroma boost tied to
-        # the curve's local slope (tried here previously) has the same
-        # problem from the other direction: slope peaks near white, so it
-        # amplifies whatever small cast sits in the highlights too. Kept
-        # deliberately dumb/tone-only here; auto_density_grade's Saturation
-        # suggestion (see there) is the one place a deliberate, uniform-
-        # across-tones boost gets added back in.
-        luma = np.dot(output_linear, LUMA_WEIGHTS)
-        target_luma = np.power(np.clip(luma, EPS, 1.0), 1.0 / max(params.gamma, EPS))
-        scale = np.where(luma > EPS, target_luma / np.maximum(luma, EPS), 1.0)
-        output_linear = np.clip(output_linear * scale[..., None], 0.0, 1.0)
+        if params.mode == "E-6":
+            # E-6 keeps this project's original per-channel power curve
+            # (see commit 74fc0bb) rather than the hue-safe curve below.
+            # Raising each channel independently stretches the ratio
+            # between them apart whenever they differ, which is exactly
+            # what gives a slide - always run with Saturation pinned at
+            # 1.0 (see auto_density_grade's E-6 branch) - its color punch:
+            # E-6's typically-below-1.0 Gamma needs *something* to restore
+            # the saturation a real slide's own contrast would have, and
+            # this curve's side effect is that restoration. Switching E-6
+            # to the hue-safe curve below (done briefly, alongside the rest
+            # of the NegPy port) preserved hue but left the ratio between
+            # channels untouched, and with no saturation boost of its own
+            # to compensate, slides came out visibly flatter/less saturated
+            # than this project originally produced.
+            output_linear = np.power(output_linear, 1.0 / max(params.gamma, EPS))
+        else:
+            # Apply the gamma curve to luma, then rescale each pixel's RGB
+            # to match - preserves hue and (HSV-style, ratio) saturation
+            # exactly. The per-channel power curve used for E-6 above
+            # doesn't: raising each channel independently stretches the
+            # ratio between them apart whenever they differ, so whichever
+            # channel already read highest (e.g. blue in a cool or
+            # sky-heavy scene) got pushed disproportionately further from
+            # the others - amplifying any residual color cast, worst
+            # exactly in near-neutral highlights where a cast reads most
+            # visibly. A per-pixel chroma boost tied to the curve's local
+            # slope (tried here previously) has the same problem from the
+            # other direction: slope peaks near white, so it amplifies
+            # whatever small cast sits in the highlights too. Kept
+            # deliberately dumb/tone-only here; auto_density_grade's
+            # Saturation suggestion (see there) is the one place a
+            # deliberate, uniform-across-tones boost gets added back in.
+            luma = np.dot(output_linear, LUMA_WEIGHTS)
+            target_luma = np.power(np.clip(luma, EPS, 1.0), 1.0 / max(params.gamma, EPS))
+            scale = np.where(luma > EPS, target_luma / np.maximum(luma, EPS), 1.0)
+            output_linear = np.clip(output_linear * scale[..., None], 0.0, 1.0)
 
     if params.mode == "B&W":
         # Collapse to true neutral gray - not just desaturated - regardless
