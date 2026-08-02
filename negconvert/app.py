@@ -85,6 +85,9 @@ def _load_sidecar(item):
             data = json.load(f)
         params_data = dict(data["params"])
         params_data["base_color"] = tuple(params_data["base_color"])
+        for key in ("channel_gain", "channel_balance"):
+            if key in params_data:
+                params_data[key] = tuple(params_data[key])
         item.params = processor.Params(**params_data)
         item.crop_rect = tuple(data["crop_rect"])
         item.aspect_ratio = data["aspect_ratio"]
@@ -769,6 +772,8 @@ class NegConvertApp(QMainWindow):
             item.preview_arr, item.crop_rect, item.rotation_90, item.straighten_angle)
         if not item.has_saved_settings:
             item.params.base_color = processor.estimate_base_color(analysis_arr, item.is_linear)
+            item.params.channel_gain, item.params.channel_balance = processor.estimate_channel_balance(
+                analysis_arr, item.params.base_color, item.is_linear, mode=item.params.mode)
         exposure, contrast, gamma, saturation = processor.auto_density_grade(
             analysis_arr, item.params.base_color, item.is_linear,
             positive=item.params.mode == "E-6")
@@ -1041,6 +1046,8 @@ class NegConvertApp(QMainWindow):
         if self.preview_arr is None:
             self.render_preview()
             return
+        self.params.channel_gain, self.params.channel_balance = processor.estimate_channel_balance(
+            self._analysis_arr(), self.params.base_color, self.is_linear, mode=self.params.mode)
         exposure, contrast, gamma, saturation = processor.auto_density_grade(
             self._analysis_arr(), self.params.base_color, self.is_linear,
             positive=self.params.mode == "E-6")

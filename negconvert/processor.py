@@ -113,6 +113,8 @@ class Params:
     shift_r: float = 0.0      # per-channel density (color balance) shift, in stops
     shift_g: float = 0.0
     shift_b: float = 0.0
+    channel_gain: tuple = (1.0, 1.0, 1.0)     # auto per-channel density-span gain, see estimate_channel_balance
+    channel_balance: tuple = (0.0, 0.0, 0.0)  # auto per-channel density shift, see estimate_channel_balance
     saturation: float = 1.0   # chroma scale around luma, applied at the end
     denoise: float = 0.0      # median-filter grain reduction, applied before Sharpening
     sharpen: float = 0.0      # unsharp-mask amount, applied last on the final sRGB output
@@ -609,6 +611,79 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
     return exposure, contrast, gamma, saturation
 
 
+def estimate_channel_balance(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
+                              mode: str = "C-41", shadow_pct: float = 0.5, highlight_pct: float = 99.5,
+                              clip_floor: float = 0.01) -> tuple:
+    """Suggest (channel_gain, channel_balance): a per-channel affine fit that
+    independently matches each color channel's own black/white density
+    points to the *average* of all three channels' points - NegConvert's
+    analog of NegPy's "independent channel bounding" (docs/PIPELINE.md §2),
+    which stretches each channel to fill the working range on its own
+    instead of trusting a single sampled/estimated film-base color.
+
+    `estimate_base_color()`/the film-base pipette only fix the *cast*
+    implied by one reference point (a near-clear patch, or wherever the user
+    clicked) - if that estimate is even slightly off in any channel, or the
+    frame's actual per-channel response doesn't quite match the assumed
+    orange mask, the whole image keeps a uniform, uncorrected tint all the
+    way through (too green/blue and red-deficient is the classic symptom of
+    an underestimated red mask density). This measures the *actual*
+    per-channel density spread in the image itself and corrects for
+    whatever residual mismatch remains, regardless of how good base_color
+    is - it is self-correcting even against a wrong base_color, the same
+    way NegPy's approach needs no base sample at all.
+
+    Both ends are matched independently per channel (unlike
+    estimate_base_color's near-clear-band-only heuristic), so this also
+    catches a crossover cast (different in shadows than highlights), not
+    just a uniform one.
+
+    Returns two length-3 tuples of (gain, shift): channel density is
+    transformed as `density * gain + shift` before any other adjustment.
+    Identity ((1,1,1), (0,0,0)) for B&W (no per-channel color to correct,
+    see the "Auto Base Color has no effect on B&W" note in the UI) and for
+    E-6: a slide has no orange mask, so a channel's own black/white density
+    range there just reflects whatever the photographed scene's real colors
+    were, not a calibration error - matching it to the other two channels
+    would distort real, legitimate color instead of correcting a cast.
+    auto_density_grade() already treats E-6 as its own case for the same
+    reason (see its docstring).
+    """
+    if mode != "C-41":
+        return (1.0, 1.0, 1.0), (0.0, 0.0, 0.0)
+
+    base = np.array(base_color, dtype=np.float32)
+    lin = arr if is_linear else srgb_to_linear(arr)
+    base_lin = base if is_linear else srgb_to_linear(base)
+    ratio = np.clip(lin / (base_lin + EPS), EPS, None)
+    density = -np.log2(ratio)
+
+    unclipped = ratio.min(axis=-1) > clip_floor
+    weights = _center_weight(*density.shape[:2])
+
+    bounds = []
+    for ch in range(3):
+        d = density[..., ch]
+        if np.count_nonzero(unclipped) >= d.size // 20:
+            sample, sample_weights = d[unclipped], weights[unclipped]
+        else:
+            sample, sample_weights = d.ravel(), weights.ravel()
+        lo, hi = (float(v) for v in _weighted_percentile(sample, sample_weights, [shadow_pct, highlight_pct]))
+        bounds.append((lo, hi))
+
+    ref_lo = sum(b[0] for b in bounds) / 3.0
+    ref_hi = sum(b[1] for b in bounds) / 3.0
+    target_span = max(ref_hi - ref_lo, EPS)
+
+    gains, shifts = [], []
+    for lo, hi in bounds:
+        gain = float(np.clip(target_span / max(hi - lo, EPS), 0.6, 1.6))
+        shifts.append(ref_lo - gain * lo)
+        gains.append(gain)
+
+    return tuple(gains), tuple(shifts)
+
+
 def sample_base_color(arr: np.ndarray, x: int, y: int, radius: int = 4) -> tuple:
     """Average a small block around (x, y) in image pixel coordinates."""
     h, w = arr.shape[:2]
@@ -654,6 +729,15 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
         density = DENSITY_RANGE + np.log2(ratio)
     else:
         density = -np.log2(ratio)
+
+    # Independent per-channel affine correction (see estimate_channel_balance):
+    # applied before anything else so it corrects the raw per-channel density
+    # itself, the same residual-mismatch fix NegPy's independent channel
+    # bounding makes regardless of how the film-base color was arrived at.
+    # Identity for B&W/E-6 - see estimate_channel_balance's docstring.
+    gains = np.array(params.channel_gain, dtype=np.float32)
+    balance = np.array(params.channel_balance, dtype=np.float32)
+    density = density * gains + balance
 
     # Color balance is an *additive* per-channel density shift, not a
     # multiplicative gain: density can be negative (e.g. a pixel slightly
