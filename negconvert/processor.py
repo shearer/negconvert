@@ -524,11 +524,19 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
         # E-6: this project's original, pre-NegPy auto-levels (see
         # docstring) - an unconditional black/white percentile stretch, no
         # center-weighting, no Auto Density/Grade damping, undamped Gamma,
-        # and Saturation left at 1.0 rather than boosted.
+        # and Saturation left at 1.0 rather than boosted. Deliberately
+        # ignores the shadow_pct/highlight_pct arguments (hardcoded to the
+        # original 0.5/99.5 instead) rather than sharing AUTO_SHADOW_PCT/
+        # AUTO_HIGHLIGHT_PCT with C-41/B&W: those were tightened to fix
+        # foggy/flat C-41 negatives, but on a slide's already-full-contrast,
+        # already-saturated positive image the same tightening compounds
+        # with this branch's own undamped contrast/gamma into an
+        # oversaturated, overcontrasty result - precisely the failure this
+        # branch exists to avoid (see docstring above).
         sample = (density_luma[unclipped]
                   if np.count_nonzero(unclipped) >= density_luma.size // 20
                   else density_luma)
-        lo, median, hi = (float(v) for v in np.percentile(sample, [shadow_pct, 50.0, highlight_pct]))
+        lo, median, hi = (float(v) for v in np.percentile(sample, [0.5, 50.0, 99.5]))
         span = max(hi - lo, EPS)
         contrast = float(np.clip(DENSITY_RANGE / span, 0.5, 2.5))
         exposure = float(np.clip((DENSITY_RANGE - hi - lo) / 2.0, -8.0, 8.0))
