@@ -1,5 +1,13 @@
 # Release Notes
 
+## v2026.07.010 — 2026-08-02
+
+### Changed
+
+- **C-41 conversions now correct a residual per-channel color cast that Auto Base Color alone couldn't catch.** A single sampled/estimated film-base color only fixes the cast implied by one reference point - if that estimate is even slightly off in any channel, or a channel's real response doesn't quite match the assumed orange mask, the whole image kept a uniform tint (too green/blue, red-deficient being the classic symptom) all the way through. A new automatic correction (`estimate_channel_balance`) independently matches each channel's own black/white density points to the three-channel average, then measures and corrects any *remaining* midtone cast from genuinely neutral (non-scene-colored) pixels specifically - catching a crossover cast the black/white-only fit can't reach. C-41 only; B&W has no color to correct and E-6 has no orange mask to correct for, so forcing either through this would read real scene color as a false cast.
+- **The default Saturation suggestion is less aggressive.** It was boosting mean chroma roughly 70% above where a reference NegPy conversion of the same frame landed, reading as oversaturated and pushing real scene color (foliage, skin, wood tones) into a visibly greenish/yellowish cast independent of any actual color-balance issue. Still user-tunable per photo via the Saturation slider.
+- **The initial C-41/B&W conversion has noticeably more contrast by default**, fixing negatives that previously converted looking flat and foggy. The black/white point detection window is now tighter (less easily pulled toward the extremes by a few outlier pixels - dust, a light leak, uneven film base), which is what was actually limiting contrast. E-6 is deliberately unaffected and keeps its own separate calibration - folding it in previously caused E-6 slides to read oversaturated and overcontrasty (see v2026.07.009).
+
 ## v2026.07.009 — 2026-07-29
 
 ### Fixed
