@@ -81,7 +81,7 @@ ANCHOR_METER_BAND = 0.12      # that pull's cap, as a fraction of DENSITY_RANGE 
 GRADE_NOMINAL_RATIO = 2.0     # DENSITY_RANGE / (P90-P10) for a "textbook normal" tonal histogram - the ~0.5-99.5th vs ~10-90th percentile span ratio of a roughly Gaussian distribution (z-score ratio 5.15/2.56 ~= 2.0), not tied to any particular exposure/contrast calibration. Recompute this if texture_lo_pct/texture_hi_pct below ever change.
 GRADE_STRENGTH = 0.5          # 0 = same Contrast on every frame, 1 = every frame's textural range fully normalized to that statistical norm
 GAMMA_STRENGTH = 0.5          # 0 = Gamma always 1.0, 1 = the median always lands exactly on mid_target - see auto_density_grade's docstring for why this needs damping like its siblings above
-SATURATION_BOOST_STRENGTH = 1.3   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; >1.0 is a deliberate extra push past the exact physical match (real photos still read a bit flat at exactly 1.0)
+SATURATION_BOOST_STRENGTH = 0.6   # fraction of the full contrast-coupled saturation boost auto_density_grade suggests - see its docstring; >1.0 is a deliberate extra push past the exact physical match (real photos still read a bit flat at exactly 1.0). Lowered from 1.3: compared directly against a real NegPy export of the same C-41 frame, 1.3 produced ~70% more mean chroma than NegPy's own render (0.094 vs 0.055), reading as an oversaturated, too-green/yellow image; the exact-match baseline (0.0) landed almost on NegPy's number (0.059) but risks the flatness the boost exists to counter, so this splits the difference rather than removing the boost entirely - still user-tunable per photo via the Saturation slider regardless.
 SATURATION_BOOST_MAX = 2.0        # cap on the suggested Saturation, so a very low Gamma can't push it to an implausible extreme
 
 # Center-weighted metering for auto_density_grade's percentile stats (see
@@ -115,6 +115,7 @@ class Params:
     shift_b: float = 0.0
     channel_gain: tuple = (1.0, 1.0, 1.0)     # auto per-channel density-span gain, see estimate_channel_balance
     channel_balance: tuple = (0.0, 0.0, 0.0)  # auto per-channel density shift, see estimate_channel_balance
+    channel_midtone_shift: tuple = (0.0, 0.0, 0.0)  # auto per-channel midtone bump, see estimate_channel_balance
     saturation: float = 1.0   # chroma scale around luma, applied at the end
     denoise: float = 0.0      # median-filter grain reduction, applied before Sharpening
     sharpen: float = 0.0      # unsharp-mask amount, applied last on the final sRGB output
@@ -613,44 +614,60 @@ def auto_density_grade(arr: np.ndarray, base_color: tuple, is_linear: bool = Fal
 
 def estimate_channel_balance(arr: np.ndarray, base_color: tuple, is_linear: bool = False,
                               mode: str = "C-41", shadow_pct: float = 0.5, highlight_pct: float = 99.5,
+                              midtone_lo_pct: float = 35.0, midtone_hi_pct: float = 65.0,
+                              neutral_pct: float = 15.0, midtone_shift_cap: float = 0.3,
                               clip_floor: float = 0.01) -> tuple:
-    """Suggest (channel_gain, channel_balance): a per-channel affine fit that
-    independently matches each color channel's own black/white density
-    points to the *average* of all three channels' points - NegConvert's
-    analog of NegPy's "independent channel bounding" (docs/PIPELINE.md §2),
-    which stretches each channel to fill the working range on its own
-    instead of trusting a single sampled/estimated film-base color.
+    """Suggest (channel_gain, channel_balance, channel_midtone_shift): a
+    per-channel correction matching each color channel to the *average* of
+    all three channels - NegConvert's analog of NegPy's "independent channel
+    bounding" (docs/PIPELINE.md §2), which stretches each channel to fill the
+    working range on its own instead of trusting a single sampled/estimated
+    film-base color.
 
     `estimate_base_color()`/the film-base pipette only fix the *cast*
     implied by one reference point (a near-clear patch, or wherever the user
     clicked) - if that estimate is even slightly off in any channel, or the
     frame's actual per-channel response doesn't quite match the assumed
     orange mask, the whole image keeps a uniform, uncorrected tint all the
-    way through (too green/blue and red-deficient is the classic symptom of
-    an underestimated red mask density). This measures the *actual*
-    per-channel density spread in the image itself and corrects for
-    whatever residual mismatch remains, regardless of how good base_color
-    is - it is self-correcting even against a wrong base_color, the same
-    way NegPy's approach needs no base sample at all.
+    way through. This measures the *actual* per-channel density spread in
+    the image itself and corrects for whatever residual mismatch remains,
+    regardless of how good base_color is.
 
-    Both ends are matched independently per channel (unlike
-    estimate_base_color's near-clear-band-only heuristic), so this also
-    catches a crossover cast (different in shadows than highlights), not
-    just a uniform one.
+    Two corrections, applied in sequence:
 
-    Returns two length-3 tuples of (gain, shift): channel density is
-    transformed as `density * gain + shift` before any other adjustment.
-    Identity ((1,1,1), (0,0,0)) for B&W (no per-channel color to correct,
-    see the "Auto Base Color has no effect on B&W" note in the UI) and for
-    E-6: a slide has no orange mask, so a channel's own black/white density
-    range there just reflects whatever the photographed scene's real colors
-    were, not a calibration error - matching it to the other two channels
-    would distort real, legitimate color instead of correcting a cast.
-    auto_density_grade() already treats E-6 as its own case for the same
-    reason (see its docstring).
+    - **channel_gain/channel_balance**: a 2-point affine fit matching each
+      channel's own black/white density percentile (`shadow_pct`/
+      `highlight_pct`) to the three-channel average. This alone only pins
+      the extremes - it says nothing about the shape between them, so a
+      per-channel response that isn't perfectly linear relative to the
+      others can still leave a cast in the midtones even once the extremes
+      match (this is exactly what a whole-frame mean will hide, since a
+      frame's overall mean is dominated by whatever colors the scene itself
+      happens to contain, not by a channel cast - only genuinely neutral
+      content reveals it).
+    - **channel_midtone_shift**: measured *after* the fit above, on
+      genuinely near-neutral (low-chroma) pixels in a midtone luma band -
+      gated to actual neutral content, unlike the fit above, because the
+      midtone otherwise reflects the scene's own colors rather than a
+      residual cast. Applied as a bounded (`midtone_shift_cap` stops),
+      additive Gaussian bump centered on the density pivot in
+      convert_linear - never a gain/contrast change, so unlike an earlier
+      version of this correction, it cannot alter a channel's *effective
+      contrast* and skew the shadows or highlights as a side effect, and it
+      decays smoothly (not a polynomial extrapolation) to zero away from
+      the midtone, so it can't run away on frames with little neutral
+      content near the fitted range.
+
+    Identity ((1,1,1), (0,0,0), (0,0,0)) for B&W (no per-channel color to
+    correct) and for E-6: a slide has no orange mask, so a channel's own
+    density range there just reflects whatever the photographed scene's
+    real colors were, not a calibration error - matching it to the other
+    two channels would distort real, legitimate color instead of correcting
+    a cast. auto_density_grade() already treats E-6 as its own case for the
+    same reason (see its docstring).
     """
     if mode != "C-41":
-        return (1.0, 1.0, 1.0), (0.0, 0.0, 0.0)
+        return (1.0, 1.0, 1.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
 
     base = np.array(base_color, dtype=np.float32)
     lin = arr if is_linear else srgb_to_linear(arr)
@@ -660,14 +677,12 @@ def estimate_channel_balance(arr: np.ndarray, base_color: tuple, is_linear: bool
 
     unclipped = ratio.min(axis=-1) > clip_floor
     weights = _center_weight(*density.shape[:2])
+    valid = unclipped if np.count_nonzero(unclipped) >= unclipped.size // 20 else np.ones(unclipped.shape, dtype=bool)
 
     bounds = []
     for ch in range(3):
         d = density[..., ch]
-        if np.count_nonzero(unclipped) >= d.size // 20:
-            sample, sample_weights = d[unclipped], weights[unclipped]
-        else:
-            sample, sample_weights = d.ravel(), weights.ravel()
+        sample, sample_weights = d[valid], weights[valid]
         lo, hi = (float(v) for v in _weighted_percentile(sample, sample_weights, [shadow_pct, highlight_pct]))
         bounds.append((lo, hi))
 
@@ -681,7 +696,31 @@ def estimate_channel_balance(arr: np.ndarray, base_color: tuple, is_linear: bool
         shifts.append(ref_lo - gain * lo)
         gains.append(gain)
 
-    return tuple(gains), tuple(shifts)
+    # Residual midtone cast, measured on genuinely neutral content *after*
+    # the shadow/highlight fit above - see docstring.
+    gains_arr = np.array(gains, dtype=np.float32)
+    shifts_arr = np.array(shifts, dtype=np.float32)
+    corrected = density * gains_arr + shifts_arr
+
+    midtone_shift = [0.0, 0.0, 0.0]
+    density_luma = corrected.mean(axis=-1)
+    chroma = corrected.max(axis=-1) - corrected.min(axis=-1)
+    luma_sample, luma_weights = density_luma[valid], weights[valid]
+    lo_l, hi_l = (float(v) for v in _weighted_percentile(luma_sample, luma_weights, [midtone_lo_pct, midtone_hi_pct]))
+    band = valid & (density_luma >= lo_l) & (density_luma <= hi_l)
+    if np.count_nonzero(band) >= density_luma.size // 50:
+        chroma_band, weights_band = chroma[band], weights[band]
+        thresh = float(_weighted_percentile(chroma_band, weights_band, [neutral_pct])[0])
+        neutral = band & (chroma <= thresh)
+        if np.count_nonzero(neutral) >= density_luma.size // 200:
+            w = weights[neutral]
+            wsum = float(w.sum())
+            mid_c = [float((corrected[..., ch][neutral] * w).sum() / wsum) for ch in range(3)]
+            mid_ref = sum(mid_c) / 3.0
+            midtone_shift = [float(np.clip(mid_ref - mid_c[ch], -midtone_shift_cap, midtone_shift_cap))
+                              for ch in range(3)]
+
+    return tuple(gains), tuple(shifts), tuple(midtone_shift)
 
 
 def sample_base_color(arr: np.ndarray, x: int, y: int, radius: int = 4) -> tuple:
@@ -738,6 +777,20 @@ def convert_linear(arr: np.ndarray, params: Params, is_linear: bool = False) -> 
     gains = np.array(params.channel_gain, dtype=np.float32)
     balance = np.array(params.channel_balance, dtype=np.float32)
     density = density * gains + balance
+
+    # Residual midtone cast (see estimate_channel_balance): a bounded,
+    # purely additive bump centered on the density pivot, tapering smoothly
+    # to zero away from it - deliberately not a gain/contrast change (that
+    # was an earlier version of this correction, and it skewed the shadows/
+    # highlights as a side effect) and not a polynomial (that version could
+    # extrapolate unboundedly on frames with little neutral content near
+    # the fitted range).
+    if params.channel_midtone_shift != (0.0, 0.0, 0.0):
+        midtone_shift = np.array(params.channel_midtone_shift, dtype=np.float32)
+        pivot = DENSITY_RANGE / 2.0
+        bump_width = DENSITY_RANGE / 3.0
+        weight = np.exp(-((density - pivot) / bump_width) ** 2)
+        density = density + midtone_shift * weight
 
     # Color balance is an *additive* per-channel density shift, not a
     # multiplicative gain: density can be negative (e.g. a pixel slightly
